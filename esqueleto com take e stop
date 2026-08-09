@@ -1,0 +1,352 @@
+//+------------------------------------------------------------------+
+//|                                                      ProjectNamea |
+//|                                      Copyright 2020, CompanyName |
+//|                                       http://www.companyname.net |
+//+------------------------------------------------------------------+
+#include <Trade\Trade.mqh>
+#include <CTradeStatistics.mqh>
+CTrade trade;
+CTradeStatistics m_stat;
+
+// INPUTS
+//-------
+input group ""
+input int hAbertura = 3;
+input int mAbertura = 0;
+input int hFechamento = 22;
+input int mFechamento = 0;
+
+input group "Gestão de Risco"
+input int range_anterior = 3;            // Número de candles para medir a Máx/Min do Stop Loss
+input double take_multiplicador = 1.0;   // Multiplicador do Take Profit (1.0 = Risco de 1 para 1)
+
+input group "Filtro Estocastico"
+input int espacamento = 10;
+input int periodoEstocastico1 = 14;
+input int MediaEstocastico1 = 3;
+
+input group "Filtro ADX"
+input int linha_ADX = 25;
+input int periodo_ADX = 15;
+
+
+input group "EXTRA"
+input bool Inverter_Estrategia = false;
+input bool Inverter_Filtro_Estocastico = false;
+input bool Inverter_Filtro_ADX = false;
+input int coldown = 0;
+
+input group ""
+input double Lotes = 1;
+input int Magic = 1;
+
+
+// VARIÁVEIS
+int linha_de_compra = espacamento;
+int linha_de_venda = 100-espacamento;
+int acima_da_linha_compra_Estocastico = 0;
+int abaixo_da_linha_venda_Estocastico = 0;
+int acima_da_linha_ADX = 0;
+datetime lastTime = iTime(NULL, 0, 0);
+
+bool setup_de_compra = false;
+bool setup_de_venda = false;
+int pause = 0;
+int posicoesAbertas = 0;
+
+// Variável para rastrear se tínhamos operação e ela fechou (no SL ou TP)
+bool estavaComPosicaoAberta = false; 
+
+// HANDLES
+//--------
+double handleEstocastico1;
+double handleADX1;
+
+// BUFFERS
+//--------
+double Estocastico1[];
+double ADX1[];
+
+MqlRates rates[];
+
+// ANTISPAM
+//---------
+datetime candleNovo;
+datetime candleAtual;
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int OnInit() {
+   trade.SetExpertMagicNumber(Magic);
+   // HANDLES
+   //--------
+   handleEstocastico1 = iStochastic(NULL, PERIOD_CURRENT, periodoEstocastico1, 1, MediaEstocastico1, MODE_SMA, STO_LOWHIGH);
+   handleADX1 = iADX(NULL, PERIOD_CURRENT, periodo_ADX);
+   return (INIT_SUCCEEDED);
+}
+
+
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void OnTick() {
+   // ARRAY
+   //------
+   ArraySetAsSeries(Estocastico1, true);
+   ArraySetAsSeries(ADX1, true);
+   ArraySetAsSeries(rates, true);
+   
+   // COPYBUFFER - Cálculo dinâmico para garantir que tem histórico suficiente
+   // Precisamos do setup (4 candles) ou da medição de range_anterior, o que for maior
+   int velasNecessarias = (int)MathMax(4, range_anterior + 2); 
+   
+   int copied_esto = CopyBuffer(handleEstocastico1, 0, 1, 3, Estocastico1);
+   int copied_adx  = CopyBuffer(handleADX1, 0, 1, 3, ADX1);
+   int copied_rate = CopyRates(_Symbol, _Period, 0, velasNecessarias, rates);
+   
+   // Se os dados não carregaram direito (Prevenção de erro "Array out of range")
+   if(copied_esto < 3 || copied_adx < 3 || copied_rate < velasNecessarias) return;
+
+// VERIFICA SE ESTÁ COM UMA OPERAÇÃO ABERTA
+//--------------------
+   if (GetTicketByMagicNumber(Magic) != -1) {
+      posicoesAbertas = 1;
+      estavaComPosicaoAberta = true;
+   } else {
+      posicoesAbertas = 0;
+      // Se estava aberta até o último tick e agora está 0, a ordem pegou SL ou TP
+      if(estavaComPosicaoAberta) { 
+         pause = 1 + coldown; // Inicia a pausa do robô
+         estavaComPosicaoAberta = false;
+      }
+   }
+
+///-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+///  V E R I F I C A Ç Ã O   N A   A B E R T U R A   D O S   C A N D L E S  /// --------------------------------------------------------------------------------------------
+///-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   if(iTime(NULL, 0, 0) != lastTime) {
+      // O tempo do último candle mudou, então um novo candle começou
+      if(pause > 0) {
+         pause = pause - 1;
+      }
+      
+      // Atualiza o tempo do último candle
+      lastTime = iTime(NULL, 0, 0);
+      
+
+      ///-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      ///  V E R I F I C A Ç Ã O   D O S   F I L T R O S  /// --------------------------------------------------------------------------------------------------------------------
+      ///-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      if(Estocastico1[1] > linha_de_compra) {
+         if(Inverter_Filtro_Estocastico == false) acima_da_linha_compra_Estocastico = 1;
+         else acima_da_linha_compra_Estocastico = 0;
+      } else {
+         if(Inverter_Filtro_Estocastico == false) acima_da_linha_compra_Estocastico = 0;
+         else acima_da_linha_compra_Estocastico = 1;
+      }
+      
+      if(Estocastico1[1] < linha_de_venda) {
+         if(Inverter_Filtro_Estocastico == false) abaixo_da_linha_venda_Estocastico = 1;
+         else abaixo_da_linha_venda_Estocastico = 0;
+      } else {
+         if(Inverter_Filtro_Estocastico == false) abaixo_da_linha_venda_Estocastico = 0;
+         else abaixo_da_linha_venda_Estocastico = 1;
+      }
+      
+      if(ADX1[1] > linha_ADX) {
+         if(Inverter_Filtro_ADX == false) acima_da_linha_ADX = 1;
+         else acima_da_linha_ADX = 0;
+      } else {
+         if(Inverter_Filtro_ADX == false) acima_da_linha_ADX = 0;
+         else acima_da_linha_ADX = 1;
+      }
+      
+      ///-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      ///  V E R I F I C A Ç Ã O   D O   S E T U P  /// --------------------------------------------------------------------------------------------------------------------
+      ///-------------------------------------------------------------------------------------------------------------------------------------------------------------------------  
+      if(rates[1].close > rates[2].close && rates[2].close > rates[3].close) {
+         setup_de_compra = true;
+      } else {
+         setup_de_compra = false;
+      }
+      
+      if(rates[1].close < rates[2].close && rates[2].close < rates[3].close) {
+         setup_de_venda = true;
+      } else {
+         setup_de_venda = false;;
+      }
+      
+      Print("posições abertas: ",posicoesAbertas);
+      Print("acima_da_linha_compra_Estocastico: ",acima_da_linha_compra_Estocastico);
+      Print("abaixo_da_linha_venda_Estocastico: ",abaixo_da_linha_venda_Estocastico);
+   }
+
+   // HORÁRIO OPERACIONAL
+   //--------------------
+   MqlDateTime dataInterna;
+   TimeCurrent(dataInterna);
+   double loc_horarioAtual = dataInterna.hour * 60 + dataInterna.min;
+   double loc_horarioAbertura = hAbertura * 60 + mAbertura;
+   double loc_horarioFechamento = hFechamento * 60 + mFechamento - 1;
+   if (loc_horarioAtual > loc_horarioFechamento) {
+      encerrarPosicoes();
+      cancelarOrdens();
+   }
+   if (loc_horarioAtual < loc_horarioAbertura) return;
+   if (loc_horarioAtual > loc_horarioFechamento) return;
+   
+   // ANTISPAM
+   //---------
+   MqlTick price_info;
+   ZeroMemory(price_info);
+   SymbolInfoTick(_Symbol, price_info);
+   
+   
+   ///----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   ///  L Ó G I C A   O P E R A C I O N A L  -  E N T R A D A  (C O M   S L / T P ) /// ----------------------------------------------------------------------------------
+   ///----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   if(posicoesAbertas == 0 && pause == 0 && acima_da_linha_ADX == 1) {
+      
+      bool vaiComprar = false;
+      bool vaiVender = false;
+      
+      // Determina a intenção da operação aplicando a possível inversão da estratégia
+      if(setup_de_compra == 1 && acima_da_linha_compra_Estocastico == 1) {
+         if(Inverter_Estrategia == false) vaiComprar = true;
+         else vaiVender = true;
+      }
+      else if(setup_de_venda == 1 && abaixo_da_linha_venda_Estocastico == 1) {
+         if(Inverter_Estrategia == false) vaiVender = true;
+         else vaiComprar = true;
+      }
+      
+      // Executa Ordem de COMPRA
+      if(vaiComprar) {
+         // Busca a menor mínima dos últimos 'X' candles
+         double sl_price = rates[1].low;
+         for(int i = 1; i <= range_anterior; i++) {
+            if(rates[i].low < sl_price) {
+               sl_price = rates[i].low;
+            }
+         }
+         
+         double ask_price = price_info.ask;
+         double distancia_sl = ask_price - sl_price;
+         
+         // Se o Stop for válido (maior que zero)
+         if(distancia_sl > 0) {
+            double tp_price = ask_price + (distancia_sl * take_multiplicador);
+            
+            // Arredonda para as casas decimais corretas para a corretora aceitar as ordens
+            sl_price = NormalizeDouble(sl_price, _Digits);
+            tp_price = NormalizeDouble(tp_price, _Digits);
+            
+            trade.Buy(Lotes, _Symbol, ask_price, sl_price, tp_price);
+         }
+      }
+      // Executa Ordem de VENDA
+      else if(vaiVender) {
+         // Busca a maior máxima dos últimos 'X' candles
+         double sl_price = rates[1].high;
+         for(int i = 1; i <= range_anterior; i++) {
+            if(rates[i].high > sl_price) {
+               sl_price = rates[i].high;
+            }
+         }
+         
+         double bid_price = price_info.bid;
+         double distancia_sl = sl_price - bid_price;
+         
+         // Se o Stop for válido (maior que zero)
+         if(distancia_sl > 0) {
+            double tp_price = bid_price - (distancia_sl * take_multiplicador);
+            
+            // Arredonda para as casas decimais corretas
+            sl_price = NormalizeDouble(sl_price, _Digits);
+            tp_price = NormalizeDouble(tp_price, _Digits);
+            
+            trade.Sell(Lotes, _Symbol, bid_price, sl_price, tp_price);
+         }
+      } 
+   }
+}
+
+// ENCERRAR POSIÇÕES
+void encerrarPosicoes() {
+   for (int i = 0; i < PositionsTotal(); i++) {
+      trade.PositionClose(PositionGetSymbol(i));
+   }
+}
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void cancelarOrdens() {
+   for (int i = 0; i < OrdersTotal(); i++) {
+      ulong orderticket = OrderGetTicket(i);
+      trade.OrderDelete(orderticket);
+   }
+}
+
+long GetTicketByMagicNumber(int magicNumber)
+{
+    // Contar o número de posições abertas
+    int totalPositions = PositionsTotal();
+    
+    // Percorrer todas as posições abertas
+    for (int i = 0; i < totalPositions; i++)
+    {
+        // Obter o identificador (ticket) da posição
+        ulong ticket = PositionGetTicket(i);
+        
+        // Verificar se conseguimos obter os detalhes da posição
+        if (PositionSelectByTicket(ticket))
+        {
+            // Obter o magic number da posição
+            int positionMagicNumber = (int)PositionGetInteger(POSITION_MAGIC);
+            
+            // Comparar com o magic number especificado
+            if (positionMagicNumber == magicNumber)
+            {
+                // Retornar o ticket se o magic number corresponder
+                return ticket;
+            }
+        }
+    }
+    
+    // Se não encontrar, retornar -1
+    return -1;
+}
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double OnTester() {
+   int handle = iCustom(_Symbol, PERIOD_CURRENT, "TradeBuddyTesterMT5");
+   ChartIndicatorAdd(0,0,handle);
+
+// Verifica se o cálculo das estatísticas foi realizado com sucesso
+   if(!m_stat.Calculate()) {
+      return 0;
+   }
+// Verifica o número de trades
+   if(TesterStatistics(STAT_TRADES) <= 500) {
+      return 0;
+   }
+   double resultado = MathPow(m_stat.LRCorrelation(), 10)*m_stat.ProfitFactor();
+   if(m_stat.Profit() > 0) {
+      if(resultado > 0) {
+         return resultado;
+      } else {
+         return resultado * -1;
+      }
+   } else {
+      if(resultado < 0) {
+         return resultado;
+      } else {
+         return resultado * -1;
+      }
+   }
+}
