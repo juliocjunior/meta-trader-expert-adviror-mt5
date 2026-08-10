@@ -11,6 +11,7 @@ CTradeStatistics m_stat;
 // INPUTS
 //-------
 input group ""
+input int mintrades = 300;
 input int hAbertura = 3;
 input int mAbertura = 0;
 input int hFechamento = 22;
@@ -324,29 +325,40 @@ long GetTicketByMagicNumber(int magicNumber)
 //|                                                                  |
 //+------------------------------------------------------------------+
 double OnTester() {
-   int handle = iCustom(_Symbol, PERIOD_CURRENT, "TradeBuddyTesterMT5");
-   ChartIndicatorAdd(0,0,handle);
+  //int handle = iCustom(_Symbol, PERIOD_CURRENT, "TradeBuddyTesterMT5");
+  //ChartIndicatorAdd(0,0,handle);
 
 // Verifica se o cálculo das estatísticas foi realizado com sucesso
    if(!m_stat.Calculate()) {
       return 0;
    }
+   
 // Verifica o número de trades
-   if(TesterStatistics(STAT_TRADES) <= 500) {
-      return 0;
+   double Resultado = 0;
+   double SharpeRadio = MathPow(TesterStatistics(STAT_SHARPE_RATIO), 1);
+   double Trades = MathPow(m_stat.Trades(), 1); 
+   double modmintrades = MathPow(mintrades, 1);
+   
+   if (m_stat.Trades() < mintrades && m_stat.Trades() > 100) {
+      Resultado = Trades * SharpeRadio;
+      
+   } else if (m_stat.Trades() > mintrades){
+      Resultado = modmintrades * SharpeRadio;
    }
-   double resultado = MathPow(m_stat.LRCorrelation(), 10)*m_stat.ProfitFactor();
+   
+   Resultado = MathPow(m_stat.LRCorrelation(), 5)*Resultado;
+   
    if(m_stat.Profit() > 0) {
-      if(resultado > 0) {
-         return resultado;
+      if(Resultado > 0) {
+         return (Resultado)/1;
       } else {
-         return resultado * -1;
+         return (Resultado * -1)/1;
       }
    } else {
-      if(resultado < 0) {
-         return resultado;
+      if(Resultado < 0) {
+         return (Resultado)/1;
       } else {
-         return resultado * -1;
+         return (Resultado * -1)/1;
       }
    }
 }
