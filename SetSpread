@@ -1,23 +1,202 @@
 #property script_show_inputs
 
-// Input para definir o spread fixo em pips
-input int FixedSpreadPips = 4; // Spread fixo em pips
+input double Spread = 5.0;   // Spread fixo em pontos
 
-void OnStart() {
-    MqlTick ticks[];
-    
-    // Copia todos os ticks disponíveis para o símbolo atual
-    if (CopyTicksRange(_Symbol, ticks, COPY_TICKS_ALL, 0, TimeCurrent() * 1000)) {
-        double spreadInPrice = FixedSpreadPips * _Point; // Converte pips para preço
-        
-        for (int i = 0; i < ArraySize(ticks); i++) {
-            // Ajusta o preço ask para aplicar o spread fixo
-            ticks[i].ask = ticks[i].bid + spreadInPrice;
-            if (i % 10000 == 0) Print(__FUNCTION__, " > Working... ", ticks[i].time);
-        }
-    }
-    
-    // Substitui os ticks ajustados
-    int count = CustomTicksReplace(_Symbol, 0, TimeCurrent() * 1000, ticks);
-    Print(__FUNCTION__, " > Done... ", count, " ticks were updated...");
+void OnStart()
+{
+   MqlTick ticks[];
+
+   // ============================================================
+   // CONFIGURAÇÕES DO SÍMBOLO
+   // ============================================================
+
+   string symbol = _Symbol;
+
+   if(!SymbolSelect(symbol, true))
+   {
+      Print("ERRO: Não foi possível selecionar o símbolo.");
+      Print("Código: ", GetLastError());
+      return;
+   }
+
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int digits   = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+
+   if(point <= 0)
+   {
+      Print("ERRO: Não foi possível obter o POINT do símbolo.");
+      return;
+   }
+
+   Print("========================================");
+   Print("Símbolo: ", symbol);
+   Print("Digits: ", digits);
+   Print("Point: ", DoubleToString(point, digits));
+   Print("Spread configurado: ", Spread, " pontos");
+   Print("========================================");
+
+   // ============================================================
+   // CALCULA O SPREAD EM PREÇO
+   // ============================================================
+
+   double spread_price = Spread * point;
+
+   Print(
+      "Spread em preço: ",
+      DoubleToString(spread_price, digits)
+   );
+
+   // ============================================================
+   // CARREGA OS TICKS
+   // ============================================================
+
+   int copied = 0;
+   int attempts = 0;
+
+   Print("Iniciando leitura dos ticks...");
+
+   while(copied <= 0 && attempts < 10)
+   {
+      ResetLastError();
+
+      copied = CopyTicksRange(
+         symbol,
+         ticks,
+         COPY_TICKS_ALL,
+         0,
+         0
+      );
+
+      if(copied <= 0)
+      {
+         Print(
+            "Aguardando sincronização dos ticks... ",
+            "Tentativa ",
+            attempts + 1,
+            " | Erro: ",
+            GetLastError()
+         );
+
+         Sleep(1000);
+         attempts++;
+      }
+   }
+
+   // ============================================================
+   // VERIFICA SE ENCONTROU TICKS
+   // ============================================================
+
+   if(copied <= 0)
+   {
+      Print("========================================");
+      Print("ERRO: Nenhum tick foi encontrado.");
+      Print("========================================");
+      return;
+   }
+
+   Print(
+      "Sucesso! Foram encontrados ",
+      copied,
+      " ticks."
+   );
+
+   // ============================================================
+   // APLICA O SPREAD FIXO
+   // ============================================================
+
+   Print("Aplicando spread fixo...");
+
+   for(int i = 0; i < ArraySize(ticks); i++)
+   {
+      // Mantém o BID original
+      double bid = ticks[i].bid;
+
+      // Cria um ASK com spread FIXO
+      ticks[i].ask = bid + spread_price;
+
+      // Mantém o LAST coerente com o BID
+      if(ticks[i].last > 0)
+         ticks[i].last = bid;
+
+      // Mostra um exemplo
+      if(i == 0)
+      {
+         Print("----------------------------------------");
+         Print(
+            "Exemplo do primeiro tick:"
+         );
+
+         Print(
+            "BID: ",
+            DoubleToString(ticks[i].bid, digits)
+         );
+
+         Print(
+            "ASK: ",
+            DoubleToString(ticks[i].ask, digits)
+         );
+
+         Print(
+            "Spread: ",
+            DoubleToString(
+               ticks[i].ask - ticks[i].bid,
+               digits
+            )
+         );
+
+         Print("----------------------------------------");
+      }
+
+      // Progresso
+      if(i > 0 && i % 1000000 == 0)
+      {
+         Print(
+            "Processando tick ",
+            i,
+            " de ",
+            copied
+         );
+      }
+   }
+
+   // ============================================================
+   // SUBSTITUI OS TICKS
+   // ============================================================
+
+   Print("Substituindo os ticks no símbolo...");
+
+   ResetLastError();
+
+   int count = CustomTicksReplace(
+      symbol,
+      0,
+      LONG_MAX,
+      ticks
+   );
+
+   int error = GetLastError();
+
+   // ============================================================
+   // RESULTADO
+   // ============================================================
+
+   if(count > 0)
+   {
+      Print("========================================");
+      Print("SUCESSO!");
+      Print("Ticks atualizados: ", count);
+      Print("Spread fixo: ", Spread, " pontos");
+      Print(
+         "Spread em preço: ",
+         DoubleToString(spread_price, digits)
+      );
+      Print("========================================");
+   }
+   else
+   {
+      Print("========================================");
+      Print("ERRO: CustomTicksReplace falhou.");
+      Print("Código de erro: ", error);
+      Print("========================================");
+   }
 }
