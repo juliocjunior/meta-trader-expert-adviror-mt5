@@ -253,26 +253,58 @@ Visual=0
             return
 
         self.log("\nPreparando relatórios para Análise de Robustez...")
-        for item in results:
-            self.copy_file(item["xml"], Path(terminal_data_dir) / f"otimizacao_{item['window']}.xml")
-            self.copy_file(item["forward_xml"], Path(terminal_data_dir) / f"otimizacao_{item['window']}.forward.xml")
+        
+        # Pasta de destino para a análise desta configuração específica
+        # Ex: results/walk_forward/TTT/
+        pasta_analise = self.WALK_DIR / configuracao
+        pasta_analise.mkdir(parents=True, exist_ok=True)
 
+        # Copiamos todos os XMLs das janelas para a raiz da pasta da configuração
+        # O Robustness.py precisa que todos estejam na mesma pasta para comparar as janelas
+        for item in results:
+            try:
+                # Copia Backtest
+                shutil.copy2(item["xml"], pasta_analise / f"otimizacao_{item['window']}.xml")
+                # Copia Forward
+                shutil.copy2(item["forward_xml"], pasta_analise / f"otimizacao_{item['window']}.forward.xml")
+            except Exception as e:
+                self.log(f"[ERRO] Falha ao preparar arquivos para robustez: {e}")
+
+        # Montagem dos parâmetros em string (ex: "Param1,Param2,Param3")
         parametros_str = ",".join(self.PARAMS_OTIMIZADOS.keys())
-        command = [sys.executable, str(robustness_path), configuracao, parametros_str, self.EA_NAME]
+
+        # PREPARAÇÃO DOS 5 ARGUMENTOS EXIGIDOS PELO NOVO ROBUSTNESS.PY
+        # 1. configuracao (Ex: TTT)
+        # 2. parametros_str (Ex: "Periodo,Desvio")
+        # 3. EA_NAME (Ex: Bollinger)
+        # 4. N_JANELAS (Ex: "6")
+        # 5. pasta_analise (Caminho onde os XMLs foram centralizados)
+        
+        command = [
+            sys.executable, 
+            str(robustness_path), 
+            configuracao, 
+            parametros_str, 
+            self.EA_NAME, 
+            str(self.N_JANELAS), 
+            str(pasta_analise)
+        ]
 
         self.log(f"Iniciando Robustness Analyzer para {configuracao}...")
-        process = subprocess.Popen(command, cwd=str(self.BASE_DIR))
         
-        while process.poll() is None:
-            if not self.is_running():
-                process.terminate()
-                raise InterruptedError("Análise de Robustez abortada.")
-            time.sleep(1)
-
-        if process.returncode == 0:
-            self.log(f"[OK] Gráficos de Robustez gerados com sucesso para {configuracao}!")
-        else:
-            self.log(f"[ERRO] O Robustness falhou com código {process.returncode}.")
+        try:
+            # Usamos subprocess.run para esperar o término e capturar erro se houver
+            process = subprocess.run(command, cwd=str(self.BASE_DIR), capture_output=True, text=True)
+            
+            if process.returncode == 0:
+                self.log(f"[OK] Gráficos de Robustez gerados com sucesso para {configuracao}!")
+                self.log(f"Resultados em: {pasta_analise}")
+            else:
+                self.log(f"[ERRO] O Robustness falhou com código {process.returncode}.")
+                self.log(f"Detalhes do erro:\n{process.stderr}")
+                
+        except Exception as e:
+            self.log(f"[❌ ERRO CRÍTICO] Falha ao executar robustness.py: {e}")
 
     # ========================================================
     # MOTOR PRINCIPAL (CHAMADO PELA GUI)
