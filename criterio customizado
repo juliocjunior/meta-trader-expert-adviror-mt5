@@ -1,0 +1,16 @@
+double OnTester()
+  {
+   double profit = TesterStatistics(STAT_PROFIT);
+   double cmc    = TesterStatistics(STAT_COMPLEX_CRITERION) + 1;
+   double sharpe = TesterStatistics(STAT_SHARPE_RATIO);
+   double drawdown = TesterStatistics(STAT_BALANCE_DDREL_PERCENT);
+   
+   double drawdownCorrigido = 2-(drawdown /100);
+
+   double sharpeAbsoluto = MathAbs(sharpe);
+   double sharpeRaiz = MathSqrt(sharpeAbsoluto);
+
+
+   // 2. Retorna a sua fórmula customizada (Custom Max no testador)
+   return profit * cmc * sharpeRaiz * drawdownCorrigido;
+  }
