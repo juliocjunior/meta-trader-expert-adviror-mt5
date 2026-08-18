@@ -287,7 +287,7 @@ class MainWindow(QMainWindow):
             "ea_name": self.input_ea.text().strip(),
             "symbol": self.input_ativo.text().strip(),
             "timeframes_selecionados": tfs_selecionados,
-            "train_until_year": self.spin_ano.value() -1,
+            "train_until_year": self.spin_ano.value()-1,
             "train_years": self.spin_treino.value(),
             "forward_years": self.spin_forward.value(),
             "n_janelas": self.spin_janelas.value(),
