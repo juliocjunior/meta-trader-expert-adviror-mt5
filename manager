@@ -5,6 +5,7 @@ import sys
 import time
 import shutil
 import subprocess
+import traceback
 from pathlib import Path
 
 # ============================================================
@@ -58,6 +59,9 @@ class WFEManager:
         
         self.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         self.WALK_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # LOG INICIAL COM OS CAMINHOS
+        self.log(f"[SISTEMA] Diretório base de arquivos configurado em:\n  -> {self.WALK_DIR}")
 
         self.MT5_EXE = None
 
@@ -182,6 +186,8 @@ Visual=0
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        
+        self.log(f"[ARQUIVO] Arquivo de inicialização (INI) gerado em:\n  -> {path}")
 
     def run_mt5(self, config_file):
         command = [str(self.MT5_EXE), f"/config:{config_file}"]
@@ -206,9 +212,10 @@ Visual=0
         destination = Path(destination_dir) / f"{report_name}{sufixo}"
 
         if not self.wait_for_file(source, self.XML_WAIT_SECONDS):
-            raise RuntimeError(f"Timeout aguardando {source.name}.")
+            raise RuntimeError(f"Timeout aguardando {source.name}. O MetaTrader pode ter travado ou não gerou o relatório.")
 
         self.copy_file(source, destination)
+        self.log(f"[ARQUIVO] Relatório MT5 resgatado de:\n  -> {source}\n  -> Salvo para: {destination}")
         return destination
 
     def execute_window(self, configuracao, window_number, train_from, train_to, forward_from, forward_to, terminal_data_dir):
@@ -237,7 +244,9 @@ Visual=0
     # ========================================================
     def run_robustness(self, configuracao, results):
         robustness_path = self.BASE_DIR / "robustness.py"
-        if not robustness_path.exists(): return
+        if not robustness_path.exists(): 
+            self.log("[ERRO] Arquivo robustness.py não encontrado!")
+            return
 
         # Pasta de análise centralizada para o script de robustez
         pasta_analise = self.WALK_DIR / configuracao
@@ -260,11 +269,27 @@ Visual=0
             self.PERIOD_NAME
         ]
 
+        self.log(f"\n[SISTEMA] Iniciando análise de Robustez. Enviando XMLs para processamento.")
+        
         try:
-            subprocess.run(command, cwd=str(self.BASE_DIR), capture_output=True, text=True)
-            self.log(f"[OK] Robustez concluída para {self.PERIOD_NAME} - {configuracao}")
+            # Capturamos a saída e erros padrão gerados pelo subprocesso
+            process_result = subprocess.run(command, cwd=str(self.BASE_DIR), capture_output=True, text=True)
+            
+            # Se o subprocesso usou print() internamente, mandamos para a tela
+            if process_result.stdout:
+                self.log(process_result.stdout.strip())
+            
+            # Se o subprocesso gerou algum erro (stderr)
+            if process_result.stderr:
+                self.log(f"[❌ ERRO NA ROBUSTEZ - STDERR]\n{process_result.stderr.strip()}")
+            
+            if process_result.returncode == 0:
+                self.log(f"[OK] Módulo de robustez concluído com sucesso para a configuração {configuracao}.")
+            else:
+                self.log(f"[ERRO] O script robustness.py retornou código de falha: {process_result.returncode}")
+
         except Exception as e:
-            self.log(f"[ERRO Robustez] {e}")
+            self.log(f"[❌ ERRO FATAL AO CHAMAR ROBUSTNESS]\n{traceback.format_exc()}")
 
     # ========================================================
     # MOTOR PRINCIPAL
