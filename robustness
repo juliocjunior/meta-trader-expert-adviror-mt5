@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-ROBUSTNESS ANALYZER UNIVERSAL
-=============================
-
-Analisa os XMLs de otimização do MetaTrader 5 para QUALQUER EA.
-Recebe os parâmetros dinamicamente do WFO Manager.
+ROBUSTNESS ANALYZER UNIVERSAL (CORRIGIDO COM VISUAL ORIGINAL)
+=============================================================
+Analisa os XMLs de otimização passados pelo app.py.
+Mantém todas as estatísticas visuais (Profit, Trades, %) nos PNGs.
 """
 
 import os
@@ -16,19 +15,17 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 import matplotlib.pyplot as plt
-
-# --- IMPORTAÇÕES PARA OS HEATMAPS ---
 import pandas as pd
 import seaborn as sns
 
 # ============================================================
-# VARIÁVEIS GLOBAIS (Preenchidas dinamicamente pelo Main)
+# VARIÁVEIS GLOBAIS
 # ============================================================
-
 N_JANELAS = 4
 EA_NOME = "Generic_EA"
 PARAMETROS = []
 CONFIGURACAO_ATUAL = "PADRAO"
+XML_DIR = ""
 
 # Colunas fixas do MetaTrader 5
 COLUNA_BACK_RESULT = "Result"
@@ -37,46 +34,12 @@ COLUNA_PROFIT = "Profit"
 COLUNA_TRADES = "Trades"
 
 # ============================================================
-# DIRETÓRIO DE SAÍDA (Relativo à pasta do script)
+# DIRETÓRIO DE SAÍDA
 # ============================================================
 BASE_DIR = Path(__file__).resolve().parent
-
 OUTPUT_DIR = BASE_DIR / "robustness_output"
 PNG_BASE_DIR = OUTPUT_DIR / "png"
 CSV_DIR = OUTPUT_DIR / "csv"
-
-# ============================================================
-# LOCALIZAÇÃO DO MT5
-# ============================================================
-def localizar_terminal_mt5():
-    appdata = os.environ.get("APPDATA")
-    if not appdata:
-        return None
-    raiz = Path(appdata) / "MetaQuotes" / "Terminal"
-    if not raiz.exists():
-        return None
-
-    candidatos = []
-    try:
-        for terminal_dir in raiz.iterdir():
-            if not terminal_dir.is_dir():
-                continue
-            quantidade = 0
-            for janela in range(1, N_JANELAS + 1):
-                arquivo = terminal_dir / f"otimizacao_{janela}.xml"
-                if arquivo.is_file():
-                    quantidade += 1
-            if quantidade > 0:
-                candidatos.append((quantidade, terminal_dir))
-    except Exception:
-        return None
-
-    if not candidatos:
-        return None
-    candidatos.sort(key=lambda x: x[0], reverse=True)
-    return str(candidatos[0][1])
-
-XML_DIR = localizar_terminal_mt5()
 
 # ============================================================
 # UTILITÁRIOS
@@ -94,44 +57,23 @@ def limpar_nome_arquivo(texto):
     return resultado
 
 def numero(texto):
-    if texto is None:
-        return None
-    texto = str(texto).strip()
-    if texto == "":
-        return None
-    texto = texto.replace(",", ".")
+    if texto is None: return None
+    texto = str(texto).strip().replace(",", ".")
     try:
         valor = float(texto)
-        if math.isnan(valor):
-            return None
-        return valor
-    except (ValueError, TypeError):
-        return None
+        return None if math.isnan(valor) else valor
+    except: return None
 
 def valor_numerico_parametro(texto):
-    valor = numero(texto)
-    if valor is None:
-        return None
-    if float(valor).is_integer():
-        return int(valor)
-    return valor
-
-def formatar_numero(valor):
-    if isinstance(valor, int):
-        return str(valor)
-    if isinstance(valor, float):
-        if valor.is_integer():
-            return str(int(valor))
-        return f"{valor:g}"
-    return str(valor)
+    val = numero(texto)
+    if val is None: return None
+    return int(val) if val.is_integer() else val
 
 # ============================================================
 # XML
 # ============================================================
 def nome_local(tag):
-    if "}" in tag:
-        return tag.split("}", 1)[1]
-    return tag
+    return tag.split("}", 1)[1] if "}" in tag else tag
 
 def encontrar_planilha(root):
     for elemento in root.iter():
@@ -140,95 +82,60 @@ def encontrar_planilha(root):
     return None
 
 def encontrar_linhas(table):
-    linhas = []
-    for elemento in table:
-        if nome_local(elemento.tag).lower() == "row":
-            linhas.append(elemento)
-    return linhas
+    return [el for el in table if nome_local(el.tag).lower() == "row"]
 
 def extrair_celulas(row):
     valores = []
     for cell in row:
-        if nome_local(cell.tag).lower() != "cell":
-            continue
-        texto = None
+        if nome_local(cell.tag).lower() != "cell": continue
+        texto = ""
         for filho in cell.iter():
             if nome_local(filho.tag).lower() == "data":
-                texto = filho.text
+                texto = filho.text if filho.text else ""
                 break
-        if texto is None:
-            texto = ""
-        valores.append(texto.strip() if isinstance(texto, str) else "")
+        valores.append(texto.strip())
     return valores
 
 def ler_xml(caminho, tipo):
-    print(f"\n{'-'*70}\nArquivo: {os.path.basename(caminho)}")
     if not os.path.isfile(caminho):
-        raise FileNotFoundError(f"Arquivo não encontrado:\n{caminho}")
+        raise FileNotFoundError(f"Arquivo não encontrado: {caminho}")
 
-    try:
-        tree = ET.parse(caminho)
-    except ET.ParseError as erro:
-        raise RuntimeError(f"Erro ao interpretar XML:\n{erro}")
-
+    tree = ET.parse(caminho)
     root = tree.getroot()
     table = encontrar_planilha(root)
-    if table is None:
-        raise RuntimeError("Nenhuma <Table> foi encontrada no XML.")
+    if table is None: raise RuntimeError("Tabela não encontrada.")
 
     linhas = encontrar_linhas(table)
-    if not linhas:
-        raise RuntimeError("Nenhuma <Row> foi encontrada no XML.")
-
     header = extrair_celulas(linhas[0])
-    header = [str(x).strip() for x in header]
-
-    print("\nColunas encontradas:")
-    for indice, nome in enumerate(header):
-        print(f"  {indice:02d}: {nome}")
 
     resultado_coluna = COLUNA_BACK_RESULT if tipo == "back" else COLUNA_FORWARD_RESULT
-
     obrigatorias = [resultado_coluna, COLUNA_PROFIT, COLUNA_TRADES] + PARAMETROS
-    faltando = [coluna for coluna in obrigatorias if coluna not in header]
+    
+    indices = {nome: header.index(nome) for nome in obrigatorias if nome in header}
+    if len(indices) < len(obrigatorias):
+        faltando = [c for c in obrigatorias if c not in header]
+        raise RuntimeError(f"Colunas faltando: {faltando}")
 
-    if faltando:
-        raise RuntimeError("Colunas obrigatórias não encontradas no XML:\n  - " + "\n  - ".join(faltando))
-
-    indices = {nome: header.index(nome) for nome in obrigatorias}
     registros = []
-
-    for row_number, row in enumerate(linhas[1:], start=2):
+    for row in linhas[1:]:
         valores = extrair_celulas(row)
-        if not valores:
-            continue
-        if len(valores) < len(header):
-            valores += [""] * (len(header) - len(valores))
+        if len(valores) < len(header): continue
+        
+        res = numero(valores[indices[resultado_coluna]])
+        prof = numero(valores[indices[COLUNA_PROFIT]])
+        tra = numero(valores[indices[COLUNA_TRADES]])
 
-        resultado = numero(valores[indices[resultado_coluna]])
-        profit = numero(valores[indices[COLUNA_PROFIT]])
-        trades = numero(valores[indices[COLUNA_TRADES]])
-
-        parametros_linha = {}
-        linha_valida = True
-        for parametro in PARAMETROS:
-            valor = valor_numerico_parametro(valores[indices[parametro]])
-            if valor is None:
-                linha_valida = False
-                break
-            parametros_linha[parametro] = valor
-
-        if not linha_valida or resultado is None:
-            continue
-
-        registro = {"result": resultado, "profit": profit, "trades": trades}
-        registro.update(parametros_linha)
-        registros.append(registro)
-
-    if not registros:
-        raise RuntimeError("Nenhum registro de otimização válido foi encontrado.")
-
-    print(f"\nRegistros válidos encontrados: {len(registros)}")
+        params_linha = {}
+        valido = True
+        for p in PARAMETROS:
+            val = valor_numerico_parametro(valores[indices[p]])
+            if val is None: valido = False; break
+            params_linha[p] = val
+        
+        if valido and res is not None:
+            reg = {"result": res, "profit": prof, "trades": tra}
+            reg.update(params_linha)
+            registros.append(reg)
     return registros
 
 # ============================================================
@@ -236,311 +143,133 @@ def ler_xml(caminho, tipo):
 # ============================================================
 def calcular_medias_janela(registros, parametro, chave_metrica="result"):
     grupos = defaultdict(list)
-    for registro in registros:
-        valor_parametro = registro[parametro]
-        valor_metrica = registro[chave_metrica]
-        if valor_metrica is not None:
-            grupos[valor_parametro].append(valor_metrica)
-
-    medias = {}
-    for valor, valores_metrica in grupos.items():
-        if valores_metrica:
-            medias[valor] = sum(valores_metrica) / len(valores_metrica)
-    return medias
+    for r in registros:
+        grupos[r[parametro]].append(r[chave_metrica])
+    return {v: sum(l)/len(l) for v, l in grupos.items() if l}
 
 def calcular_media_das_janelas(medias_janelas):
     valores = set()
-    for dados in medias_janelas.values():
-        valores.update(dados.keys())
-
-    resultado_final = {}
-    for valor in valores:
-        lista = []
-        for janela in sorted(medias_janelas):
-            dados = medias_janelas[janela]
-            if valor in dados:
-                lista.append(dados[valor])
-        if lista:
-            resultado_final[valor] = sum(lista) / len(lista)
-    return resultado_final
+    for d in medias_janelas.values(): valores.update(d.keys())
+    res = {}
+    for v in valores:
+        lista = [medias_janelas[j][v] for j in sorted(medias_janelas) if v in medias_janelas[j]]
+        if lista: res[v] = sum(lista) / len(lista)
+    return res
 
 def calcular_estatisticas_forward(dados_forward):
     profits, trades = [], []
-    for janela in sorted(dados_forward):
+    for janela in dados_forward:
         for registro in dados_forward[janela]:
-            if registro.get("profit") is not None:
-                profits.append(registro["profit"])
-            if registro.get("trades") is not None:
-                trades.append(registro["trades"])
-
-    media_profit = sum(profits) / len(profits) if profits else None
-    positivos = sum(1 for profit in profits if profit > 0)
-    percentual_positivo = (positivos / len(profits) * 100.0) if profits else None
-    media_trades = sum(trades) / len(trades) if trades else None
-
-    return {
-        "media_profit": media_profit,
-        "media_trades": media_trades,
-        "percentual_positivo": percentual_positivo,
-        "total_configuracoes": len(profits),
-        "configuracoes_positivas": positivos,
-    }
+            if registro.get("profit") is not None: profits.append(registro["profit"])
+            if registro.get("trades") is not None: trades.append(registro["trades"])
+    
+    mp = sum(profits)/len(profits) if profits else None
+    pos = sum(1 for p in profits if p > 0)
+    pp = (pos / len(profits) * 100.0) if profits else None
+    mt = sum(trades)/len(trades) if trades else None
+    return {"media_profit": mp, "media_trades": mt, "percentual_positivo": pp, 
+            "total_configuracoes": len(profits), "configuracoes_positivas": pos}
 
 # ============================================================
-# HEATMAPS 2D
+# VISUALIZAÇÃO
 # ============================================================
-def calcular_media_2d_todas_janelas(dados_forward, param_y, param_x, chave_metrica="result"):
-    combinacoes = defaultdict(list)
-    
-    for janela, registros in dados_forward.items():
-        for reg in registros:
-            val_y = reg.get(param_y)
-            val_x = reg.get(param_x)
-            valor_metrica = reg.get(chave_metrica) 
-            
-            if val_y is not None and val_x is not None and valor_metrica is not None:
-                combinacoes[(val_y, val_x)].append(valor_metrica)
-
-    dados_plot = []
-    coluna_destino = f"Media_{chave_metrica.capitalize()}"
-    
-    for (y, x), resultados in combinacoes.items():
-        media = sum(resultados) / len(resultados)
-        dados_plot.append({param_y: y, param_x: x, coluna_destino: media})
-
-    return pd.DataFrame(dados_plot)
-
-def plotar_heatmap(df, param_y, param_x, caminho_salvar, configuracao, metrica_nome="Result"):
-    if df.empty:
-        return
-
-    coluna_valores = f"Media_{metrica_nome}"
-    matriz = df.pivot(index=param_y, columns=param_x, values=coluna_valores)
-    matriz = matriz.sort_index(ascending=False)
-
-    plt.figure(figsize=(10, 8))
-    ax = sns.heatmap(matriz, cmap="RdYlGn", annot=False, fmt=".2f", linewidths=0, cbar_kws={'label': f'Média do {metrica_nome}'})
-    
-    plt.title(f"Heatmap de Robustez: {param_y} vs {param_x}\nConfig: {configuracao} | Métrica: {metrica_nome}", fontsize=14, fontweight="bold")
-    plt.xlabel(param_x, fontsize=11)
-    plt.ylabel(param_y, fontsize=11)
-    
-    plt.tight_layout()
-    plt.savefig(caminho_salvar, dpi=150, bbox_inches="tight")
-    plt.close()
-
-# ============================================================
-# EXPORTAÇÃO (CSV E GRÁFICOS LINHA)
-# ============================================================
-def salvar_csv(parametro, medias_janelas, sufixo_metrica=""):
-    caminho = CSV_DIR / f"{limpar_nome_arquivo(parametro)}{sufixo_metrica}.csv"
-    valores = set()
-    for dados in medias_janelas.values():
-        valores.update(dados.keys())
-    valores = sorted(valores)
+def plotar_parametro(ax, parametro, medias_janelas, metrica_nome):
     media_final = calcular_media_das_janelas(medias_janelas)
-
-    with open(caminho, "w", newline="", encoding="utf-8-sig") as arquivo:
-        writer = csv.writer(arquivo, delimiter=";")
-        cabecalho = ["Valor"] + [f"J{i}" for i in range(1, N_JANELAS + 1)] + ["Media_Geral"]
-        writer.writerow(cabecalho)
-        for valor in valores:
-            linha = [valor]
-            for janela in range(1, N_JANELAS + 1):
-                v_janela = medias_janelas.get(janela, {}).get(valor)
-                linha.append(f"{v_janela:.8f}" if v_janela is not None else "")
-            
-            final = media_final.get(valor)
-            linha.append(f"{final:.8f}" if final is not None else "")
-            writer.writerow(linha)
-    return str(caminho)
-
-def plotar_parametro(ax, parametro, medias_janelas, metrica_nome="Result"):
-    valores = set()
-    for dados in medias_janelas.values():
-        valores.update(dados.keys())
-    valores = sorted(valores)
-    media_final = calcular_media_das_janelas(medias_janelas)
-
-    x = [v for v in valores if v in media_final]
+    x = sorted(media_final.keys())
     y = [media_final[v] for v in x]
-
-    if x:
-        ax.plot(x, y, marker="o", linewidth=1.5, markersize=3, label="Média geral")
+    if x: ax.plot(x, y, marker="o", linewidth=1.5, markersize=3)
     ax.axhline(0, linewidth=0.8, alpha=0.4, color="gray")
     ax.set_title(parametro, fontsize=11, fontweight="bold")
-    ax.set_xlabel(parametro, fontsize=9)
-    ax.set_ylabel(f"Média ({metrica_nome})", fontsize=9)
     ax.grid(True, alpha=0.25)
-    ax.tick_params(axis="both", labelsize=8)
 
-def gerar_png_forward(resultados_forward, estatisticas, configuracao, metrica_nome="Result"):
+def gerar_png_forward(resultados_forward, estatisticas, configuracao, metrica_nome):
     nome_arquivo = f"{limpar_nome_arquivo(configuracao)}_{metrica_nome}.png"
     caminho = PNG_BASE_DIR / nome_arquivo
-
     qtd_params = len(PARAMETROS)
-    colunas = min(3, qtd_params) if qtd_params > 0 else 1
-    linhas = math.ceil(qtd_params / colunas) if qtd_params > 0 else 1
+    cols = min(3, qtd_params) if qtd_params > 0 else 1
+    rows = math.ceil(qtd_params / cols) if qtd_params > 0 else 1
 
-    fig, axes = plt.subplots(linhas, colunas, figsize=(18, 5 * linhas))
+    fig, axes = plt.subplots(rows, cols, figsize=(18, 5 * rows))
+    if qtd_params <= 1: axes = [axes]
+    else: axes = axes.flatten()
+
+    for i, p in enumerate(PARAMETROS):
+        plotar_parametro(axes[i], p, resultados_forward[p], metrica_nome)
+    for i in range(qtd_params, len(axes)): axes[i].axis("off")
+
+    mp, mt, pp = estatisticas["media_profit"], estatisticas["media_trades"], estatisticas["percentual_positivo"]
+    tc, cp = estatisticas["total_configuracoes"], estatisticas["configuracoes_positivas"]
     
-    if qtd_params <= 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
-    for indice, parametro in enumerate(PARAMETROS):
-        plotar_parametro(axes[indice], parametro, resultados_forward[parametro], metrica_nome)
-
-    if qtd_params < len(axes):
-        for indice in range(qtd_params, len(axes)):
-            axes[indice].axis("off")
-
-    mp = estatisticas["media_profit"]
-    mt = estatisticas["media_trades"]
-    pp = estatisticas["percentual_positivo"]
-    tc = estatisticas["total_configuracoes"]
-    cp = estatisticas["configuracoes_positivas"]
-
-    t_profit = f"Média Profit: {mp:.2f}" if mp is not None else "Média Profit: N/D"
-    t_trades = f"Média Trades: {mt:.2f}" if mt is not None else "Média Trades: N/D"
-    t_pos = f"% Profit positivo: {pp:.2f}% ({cp}/{tc})" if pp is not None else "% Profit positivo: N/D"
-
-    informacoes = f"{t_profit}   |   {t_trades}   |   {t_pos}"
-
-    fig.suptitle(
-        f"FORWARD — Robustness ({EA_NOME})\nConfiguração: {configuracao} | Métrica: {metrica_nome}",
-        fontsize=16, fontweight="bold"
-    )
-    fig.text(0.5, 0.93 - (0.015 * linhas), informacoes, ha="center", va="center", fontsize=11, fontweight="bold")
+    info = f"Média Profit: {mp:.2f}  |  Média Trades: {mt:.2f}  |  % Profit positivo: {pp:.2f}% ({cp}/{tc})"
     
-    plt.tight_layout(rect=[0, 0, 1, 0.90 - (0.01 * linhas)])
+    fig.suptitle(f"FORWARD — Robustness ({EA_NOME})\nConfiguração: {configuracao} | Métrica: {metrica_nome}", 
+                 fontsize=16, fontweight="bold")
+    fig.text(0.5, 0.93 - (0.015 * rows), info, ha="center", fontsize=11, fontweight="bold")
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.90 - (0.01 * rows)])
     plt.savefig(str(caminho), dpi=160, bbox_inches="tight")
-    plt.close(fig)
-    return str(caminho)
+    plt.close()
+    return caminho
+
+def plotar_heatmap(df, param_y, param_x, caminho, configuracao, metrica):
+    if df.empty: return
+    matriz = df.pivot(index=param_y, columns=param_x, values=f"Media_{metrica.capitalize()}").sort_index(ascending=False)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(matriz, cmap="RdYlGn", annot=False, cbar_kws={'label': f'Média {metrica}'})
+    plt.title(f"Heatmap de Robustez: {param_y} vs {param_x}\nConfig: {configuracao} | Métrica: {metrica}", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(caminho, dpi=150, bbox_inches="tight")
+    plt.close()
+
+def calcular_media_2d_todas_janelas(dados_forward, param_y, param_x, chave_metrica):
+    comb = defaultdict(list)
+    for j in dados_forward:
+        for r in dados_forward[j]:
+            vy, vx, m = r.get(param_y), r.get(param_x), r.get(chave_metrica)
+            if all(v is not None for v in [vy, vx, m]): comb[(vy, vx)].append(m)
+    df_data = [{param_y: k[0], param_x: k[1], f"Media_{chave_metrica.capitalize()}": sum(v)/len(v)} for k, v in comb.items()]
+    return pd.DataFrame(df_data)
 
 # ============================================================
 # MAIN
 # ============================================================
 def main():
-    global PARAMETROS, EA_NOME, CONFIGURACAO_ATUAL
+    global PARAMETROS, EA_NOME, CONFIGURACAO_ATUAL, N_JANELAS, XML_DIR
 
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 6:
         print("\nERRO: Argumentos insuficientes.")
-        print("Uso esperado: python robustness_analyzer.py <CONFIG> <PARAM1,PARAM2,...> [NOME_EA]")
         return 1
 
     CONFIGURACAO_ATUAL = sys.argv[1].upper().strip()
-    parametros_str = sys.argv[2]
-    PARAMETROS = [p.strip() for p in parametros_str.split(",") if p.strip()]
-    
-    if len(sys.argv) >= 4:
-        EA_NOME = sys.argv[3].strip()
-
-    if not PARAMETROS:
-        print("\nERRO: Nenhum parâmetro recebido para análise.")
-        return 1
-
-    print("=" * 70)
-    print(f"ROBUSTNESS ANALYZER UNIVERSAL — {EA_NOME}")
-    print("=" * 70)
-    print(f"\nConfiguração Atual : {CONFIGURACAO_ATUAL}")
-    print(f"Parâmetros ({len(PARAMETROS)}):")
-    for p in PARAMETROS:
-        print(f"  - {p}")
-    print(f"\nDiretório de saída:\n  {OUTPUT_DIR}")
-
-    if XML_DIR is None or not os.path.isdir(XML_DIR):
-        print("\nERRO: Nenhum terminal MT5 com XMLs de otimização foi encontrado.")
-        return 1
+    PARAMETROS = [p.strip() for p in sys.argv[2].split(",") if p.strip()]
+    EA_NOME = sys.argv[3].strip()
+    N_JANELAS = int(sys.argv[4])
+    XML_DIR = sys.argv[5]
 
     garantir_diretorios()
 
-    arquivos_back, arquivos_forward = {}, {}
-    faltando_back, faltando_forward = [], []
-
-    print("\n" + "="*70 + "\nLOCALIZANDO XMLs\n" + "="*70)
-    for janela in range(1, N_JANELAS + 1):
-        cb = os.path.join(XML_DIR, f"otimizacao_{janela}.xml")
-        cf = os.path.join(XML_DIR, f"otimizacao_{janela}.forward.xml")
-        
-        if os.path.isfile(cb):
-            arquivos_back[janela] = cb
-            print(f"  [BACK] J{janela}: {cb}")
-        else:
-            faltando_back.append(janela)
-            
-        if os.path.isfile(cf):
-            arquivos_forward[janela] = cf
-            print(f"  [FORW] J{janela}: {cf}")
-        else:
-            faltando_forward.append(janela)
-
-    if faltando_back or faltando_forward:
-        print("\nERRO: Faltam arquivos XML para as janelas (BACK:", faltando_back, "| FORWARD:", faltando_forward, ")")
-        return 1
-
     dados_back, dados_forward = {}, {}
     for j in range(1, N_JANELAS + 1):
-        dados_back[j] = ler_xml(arquivos_back[j], "back")
-        dados_forward[j] = ler_xml(arquivos_forward[j], "forward")
+        dados_back[j] = ler_xml(os.path.join(XML_DIR, f"otimizacao_{j}.xml"), "back")
+        dados_forward[j] = ler_xml(os.path.join(XML_DIR, f"otimizacao_{j}.forward.xml"), "forward")
         
     estatisticas = calcular_estatisticas_forward(dados_forward)
 
-    metricas_para_analise = [
-        ("result", "Result"), 
-        ("profit", "Profit")
-    ]
-
-    for chave_metrica, metrica_nome in metricas_para_analise:
-        print("\n" + "="*70)
-        print(f"PROCESSANDO DADOS PARA: {metrica_nome.upper()}")
-        print("="*70)
+    for chave, nome_metrica in [("result", "Result"), ("profit", "Profit")]:
+        res_forw = {p: {j: calcular_medias_janela(dados_forward[j], p, chave) for j in range(1, N_JANELAS+1)} for p in PARAMETROS}
         
-        resultados_back, resultados_forward = {}, {}
+        gerar_png_forward(res_forw, estatisticas, CONFIGURACAO_ATUAL, nome_metrica)
 
-        for parametro in PARAMETROS:
-            mb_janelas, mf_janelas = {}, {}
-            for janela in range(1, N_JANELAS + 1):
-                mb_janelas[janela] = calcular_medias_janela(dados_back[janela], parametro, chave_metrica)
-                mf_janelas[janela] = calcular_medias_janela(dados_forward[janela], parametro, chave_metrica)
-
-            resultados_back[parametro] = mb_janelas
-            resultados_forward[parametro] = mf_janelas
-
-            salvar_csv(f"{parametro}_BACK", mb_janelas, f"_{metrica_nome}")
-            salvar_csv(f"{parametro}_FORWARD", mf_janelas, f"_{metrica_nome}")
-
-        print(f"\n  Gerando PNGs de Linha ({metrica_nome})...")
-        c_forw = gerar_png_forward(resultados_forward, estatisticas, CONFIGURACAO_ATUAL, metrica_nome)
-        print(f"  [OK] Salvo em: {c_forw}")
+        pares = [("Espacamento_Filtro_Estocastico1", "Periodo_Filtro_Estocastico1", "Filtro_Estocastico"),
+                 ("Linha_Filtro_ADX1", "Periodo_Filtro_ADX1", "Filtro_ADX")]
         
-        # --------------------------------------------------------
-        # HEATMAPS COM NOMES CUSTOMIZADOS
-        # --------------------------------------------------------
-        # Tupla: (Eixo Y, Eixo X, Nome Simplificado para o Arquivo)
-        pares_heatmaps = [
-            ("Espacamento_Filtro_Estocastico1", "Periodo_Filtro_Estocastico1", "Filtro_Estocastico"),
-            ("Linha_Filtro_ADX1", "Periodo_Filtro_ADX1", "Filtro_ADX")
-        ]
-
-        print(f"\n  Gerando Heatmaps ({metrica_nome})...")
-        for param_y, param_x, nome_amigavel in pares_heatmaps:
-            if param_y in PARAMETROS and param_x in PARAMETROS:
-                df_hm = calcular_media_2d_todas_janelas(dados_forward, param_y, param_x, chave_metrica)
-                
-                # Exemplo: TTT_Filtro_Estocastico_Heatmap_Result.png
-                nome_arq_hm = f"{limpar_nome_arquivo(CONFIGURACAO_ATUAL)}_{nome_amigavel}_Heatmap_{metrica_nome}.png"
-                caminho_hm = PNG_BASE_DIR / nome_arq_hm
-                
-                plotar_heatmap(df_hm, param_y, param_x, caminho_hm, CONFIGURACAO_ATUAL, metrica_nome)
-                print(f"  [OK] Heatmap salvo: {caminho_hm}")
-            else:
-                print(f"  [IGNORADO] Parâmetros {param_y} ou {param_x} não encontrados nesta rodada.")
-
-    print("\n" + "="*70 + "\nROBUSTNESS CONCLUÍDO COM SUCESSO\n" + "="*70 + "\n")
+        for py, px, nome_amigavel in pares:
+            if py in PARAMETROS and px in PARAMETROS:
+                df_hm = calcular_media_2d_todas_janelas(dados_forward, py, px, chave)
+                c_hm = PNG_BASE_DIR / f"{limpar_nome_arquivo(CONFIGURACAO_ATUAL)}_{nome_amigavel}_Heatmap_{nome_metrica}.png"
+                plotar_heatmap(df_hm, py, px, c_hm, CONFIGURACAO_ATUAL, nome_metrica)
 
     return 0
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
