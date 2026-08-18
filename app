@@ -63,7 +63,7 @@ class TrabalhadorWFO(QThread):
                 # Incrementa o progresso global após cada timeframe concluído
                 passo_atual_global += (len(cenarios) * n_janelas)
 
-            self.sinal_log.emit("\n✅ [SISTEMA] Processamento Multi-Timeframe finalizado com sucesso.")
+            self.sinal_log.emit("\n✅ [SISTEMA] Processamento Multi-Timeframe finalizado.")
             self.sinal_fim.emit()
             
         except InterruptedError as e:
@@ -102,7 +102,7 @@ class MainWindow(QMainWindow):
     # MÓDULO 1: Configuração Geral e Timeframes
     # --------------------------------------------------------
     def criar_modulo_1(self):
-        grupo = QGroupBox("") # Título removido
+        grupo = QGroupBox("") 
         layout = QVBoxLayout(grupo)
         layout.setSpacing(15)
         form = QFormLayout()
@@ -145,7 +145,7 @@ class MainWindow(QMainWindow):
         form.addRow("Ativo:", self.input_ativo)
         form.addRow("Timeframes:", self.widget_tfs)
         form.addRow(QLabel(" ")) 
-        form.addRow("Ano Alvo Final:", self.spin_ano)
+        form.addRow("Otimizar até o fim do ano:", self.spin_ano)
         form.addRow("Anos Treino:", self.spin_treino)
         form.addRow("Anos Forward:", self.spin_forward)
         form.addRow("Qtd Janelas:", self.spin_janelas)
@@ -158,7 +158,7 @@ class MainWindow(QMainWindow):
     # MÓDULO 2: Tabela de Parâmetros e Cenários
     # --------------------------------------------------------
     def criar_modulo_2(self):
-        grupo = QGroupBox("") # Título removido
+        grupo = QGroupBox("") 
         layout = QVBoxLayout(grupo)
         layout.setSpacing(15)
 
@@ -219,7 +219,7 @@ class MainWindow(QMainWindow):
     # MÓDULO 3: Telemetria e Execução
     # --------------------------------------------------------
     def criar_modulo_3(self):
-        grupo = QGroupBox("") # Título removido
+        grupo = QGroupBox("") 
         layout = QVBoxLayout(grupo)
         layout.setSpacing(15)
 
@@ -269,12 +269,16 @@ class MainWindow(QMainWindow):
         for row in range(self.tabela.rowCount()):
             nome = self.tabela.item(row, 0).text().strip() if self.tabela.item(row, 0) else ""
             if not nome: continue
+            
+            # Correção de segurança: troca vírgula por ponto e exibe erro se usuário digitar letra
             try:
-                start = self.tabela.item(row, 1).text()
-                step = self.tabela.item(row, 2).text()
-                stop = self.tabela.item(row, 3).text()
+                start = self.tabela.item(row, 1).text().replace(',', '.')
+                step = self.tabela.item(row, 2).text().replace(',', '.')
+                stop = self.tabela.item(row, 3).text().replace(',', '.')
                 parametros[nome] = (float(start), float(step), float(stop))
-            except: return None
+            except ValueError:
+                QMessageBox.critical(self, "Erro de Tipagem", f"Os valores do parâmetro '{nome}' devem ser apenas números!")
+                return None
 
         tfs_selecionados = []
         for nome, chk in self.check_tfs.items():
@@ -287,7 +291,7 @@ class MainWindow(QMainWindow):
             "ea_name": self.input_ea.text().strip(),
             "symbol": self.input_ativo.text().strip(),
             "timeframes_selecionados": tfs_selecionados,
-            "train_until_year": self.spin_ano.value()-1,
+            "train_until_year": self.spin_ano.value() - 1,
             "train_years": self.spin_treino.value(),
             "forward_years": self.spin_forward.value(),
             "n_janelas": self.spin_janelas.value(),
@@ -297,13 +301,21 @@ class MainWindow(QMainWindow):
 
     def iniciar_operacao(self):
         dados = self.capturar_dados()
-        if not dados or not dados['timeframes_selecionados'] or not dados['configuracoes_ativas']:
+        if not dados: 
+            return # Erro já exibido pelaMessageBox no capturar_dados()
+            
+        if not dados['timeframes_selecionados'] or not dados['configuracoes_ativas']:
             QMessageBox.critical(self, "Erro", "Selecione pelo menos um Timeframe e um Cenário!")
             return
 
         self.btn_iniciar.setEnabled(False)
         self.btn_parar.setEnabled(True)
         self.console.clear()
+        
+        # --- CORREÇÃO: ZERAR BARRA DE PROGRESSO AO INICIAR ---
+        self.barra_progresso.setValue(0)
+        self.barra_progresso.setFormat("Processando... %p%")
+        # -----------------------------------------------------
         
         self.worker = TrabalhadorWFO(dados)
         self.worker.sinal_log.connect(self.console.append)
@@ -312,8 +324,14 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def parar_operacao(self):
-        if hasattr(self, 'worker'): self.worker.parar()
+        if hasattr(self, 'worker'): 
+            self.worker.parar()
+            
         self.btn_parar.setEnabled(False)
+        
+        # --- CORREÇÃO: ZERAR BARRA DE PROGRESSO AO ABORTAR ---
+        self.barra_progresso.setValue(0)
+        # -----------------------------------------------------
 
     def atualizar_progresso(self, atual, total):
         self.barra_progresso.setMaximum(total)
@@ -322,7 +340,13 @@ class MainWindow(QMainWindow):
     def finalizar_operacao(self):
         self.btn_iniciar.setEnabled(True)
         self.btn_parar.setEnabled(False)
-        self.barra_progresso.setFormat("Concluído 100%" if self.barra_progresso.value() == self.barra_progresso.maximum() else "Interrompido")
+        
+        # --- CORREÇÃO: VERIFICAÇÃO SEGURA SE CHEGOU EM 100% OU FOI ABORTADO ---
+        if self.barra_progresso.value() == self.barra_progresso.maximum() and self.barra_progresso.maximum() > 0:
+            self.barra_progresso.setFormat("Concluído 100%")
+        else:
+            self.barra_progresso.setFormat("Interrompido")
+        # ----------------------------------------------------------------------
 
     def aplicar_estilo_qss(self):
         estilo = """
