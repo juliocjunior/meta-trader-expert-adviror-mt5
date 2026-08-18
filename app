@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import sys
+import traceback
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QFormLayout, QGridLayout, QLineEdit, 
                              QComboBox, QSpinBox, QPushButton, QTableWidget, 
@@ -70,7 +71,9 @@ class TrabalhadorWFO(QThread):
             self.sinal_log.emit(f"\n[🛑 ALERTA] {str(e)}")
             self.sinal_fim.emit()
         except Exception as e:
-            self.sinal_log.emit(f"\n[❌ ERRO FATAL] {str(e)}")
+            # Captura a trilha completa do erro e joga na tela
+            erro_completo = traceback.format_exc()
+            self.sinal_log.emit(f"\n[❌ ERRO FATAL NO PROCESSO]\n{erro_completo}")
             self.sinal_fim.emit()
 
     def parar(self):
@@ -312,10 +315,9 @@ class MainWindow(QMainWindow):
         self.btn_parar.setEnabled(True)
         self.console.clear()
         
-        # --- CORREÇÃO: ZERAR BARRA DE PROGRESSO AO INICIAR ---
+        # ZERAR BARRA DE PROGRESSO AO INICIAR
         self.barra_progresso.setValue(0)
         self.barra_progresso.setFormat("Processando... %p%")
-        # -----------------------------------------------------
         
         self.worker = TrabalhadorWFO(dados)
         self.worker.sinal_log.connect(self.console.append)
@@ -329,9 +331,8 @@ class MainWindow(QMainWindow):
             
         self.btn_parar.setEnabled(False)
         
-        # --- CORREÇÃO: ZERAR BARRA DE PROGRESSO AO ABORTAR ---
+        # ZERAR BARRA DE PROGRESSO AO ABORTAR
         self.barra_progresso.setValue(0)
-        # -----------------------------------------------------
 
     def atualizar_progresso(self, atual, total):
         self.barra_progresso.setMaximum(total)
@@ -341,12 +342,22 @@ class MainWindow(QMainWindow):
         self.btn_iniciar.setEnabled(True)
         self.btn_parar.setEnabled(False)
         
-        # --- CORREÇÃO: VERIFICAÇÃO SEGURA SE CHEGOU EM 100% OU FOI ABORTADO ---
+        # VERIFICAÇÃO SEGURA SE CHEGOU EM 100% OU FOI ABORTADO
         if self.barra_progresso.value() == self.barra_progresso.maximum() and self.barra_progresso.maximum() > 0:
             self.barra_progresso.setFormat("Concluído 100%")
         else:
             self.barra_progresso.setFormat("Interrompido")
-        # ----------------------------------------------------------------------
+
+    # --------------------------------------------------------
+    # SEGURANÇA: Fechar o MT5 ao fechar a janela
+    # --------------------------------------------------------
+    def closeEvent(self, event):
+        """Sobrescreve o evento de fechar a janela (Botão 'X') para limpar threads ativas"""
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            self.console.append("\n[SISTEMA] Aguardando o encerramento seguro do MetaTrader e subprocessos...")
+            self.parar_operacao()
+            self.worker.wait() # Aguarda a thread finalizar o encerramento limpo antes de destruir a janela
+        event.accept()
 
     def aplicar_estilo_qss(self):
         estilo = """
