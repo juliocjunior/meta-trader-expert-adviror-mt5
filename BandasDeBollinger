@@ -166,7 +166,7 @@ enum OptionType
 
 // INPUTS
 //-------
-
+ 
 
 input group "Inverter"
 input bool Inverter_Filtro_Estocastico1 = false;
@@ -180,7 +180,7 @@ input OptionsEnum Media_Filtro_Estocastico1 = Option1;
 
 input group "Filtro Filtro_ADX1"
 input int Linha_Filtro_ADX1 = 25;
-input OptionsEnum Periodo_Filtro_ADX1 = Option1;
+input int Periodo_Filtro_ADX1 = 1;
 
 input group "BollingerBands1"
 input OptionsEnum Periodo_BollingerBands1 = Option1;
@@ -481,43 +481,93 @@ long GetTicketByMagicNumber(int magicNumber)
 }
 
 //+------------------------------------------------------------------+
-//|                                                                  |
+//| Função para calcular o LR Correlation da curva de saldo          |
 //+------------------------------------------------------------------+
-double OnTester() {
-  //int handle = iCustom(_Symbol, PERIOD_CURRENT, "TradeBuddyTesterMT5");
-  //ChartIndicatorAdd(0,0,handle);
-
-// Verifica se o cálculo das estatísticas foi realizado com sucesso
-   if(!m_stat.Calculate()) {
-      return 0;
-   }
+double GetLRCorrelation()
+  {
+   // Solicita o histórico inteiro de operações do Strategy Tester
+   HistorySelect(0, TimeCurrent() + 86400);
+   int total_deals = HistoryDealsTotal();
    
-// Verifica o número de trades
-   double Resultado = 0;
-   double SharpeRadio = MathPow(TesterStatistics(STAT_SHARPE_RATIO), 1);
-   double Trades = MathPow(m_stat.Trades(), 1); 
-   double modmintrades = MathPow(mintrades, 1);
+   double balance = 0.0;
    
-   if (m_stat.Trades() < mintrades && m_stat.Trades() > 20) {
-      Resultado = Trades * SharpeRadio;
+   // Variáveis para a Fórmula da Correlação de Regressão Linear (Pearson)
+   int n = 0;
+   double sum_x = 0.0;
+   double sum_y = 0.0;
+   double sum_xy = 0.0;
+   double sum_x2 = 0.0;
+   double sum_y2 = 0.0;
+   
+   // Itera sobre todos os "deals" para reproduzir a progressão do saldo
+   for(int i = 0; i < total_deals; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket > 0)
+        {
+         // Pega os valores financeiros resultantes do Deal
+         double profit     = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+         double commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+         double swap       = HistoryDealGetDouble(ticket, DEAL_SWAP);
+         double fee        = HistoryDealGetDouble(ticket, DEAL_FEE); // Importante para MT5 moderno
+         
+         double result = profit + commission + swap + fee;
+         
+         long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+         long type  = HistoryDealGetInteger(ticket, DEAL_TYPE);
+         
+         // Adiciona um ponto na curva de saldo SE a operação alterou o dinheiro (como depósito inicial ou lucro/prejuízo)
+         // OU se foi um fechamento de posição (mesmo que tenha saído no zero a zero)
+         if(result != 0.0 || entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_INOUT || entry == DEAL_ENTRY_OUT_BY || type == DEAL_TYPE_BALANCE)
+           {
+            balance += result;
+            n++; // Eixo X (número do trade)
+            
+            // Incrementa os somatórios
+            sum_x  += n;
+            sum_y  += balance;           // Eixo Y (saldo atual)
+            sum_xy += n * balance;
+            sum_x2 += n * n;
+            sum_y2 += balance * balance;
+           }
+        }
+     }
+   
+   // Se houver menos de 2 pontos (ex: robô não operou, só tem o depósito inicial), não há correlação
+   if(n <= 1)
+      return 0.0;
       
-   } else if (m_stat.Trades() > mintrades){
-      Resultado = modmintrades * SharpeRadio;
-   }
+   // Prepara o divisor e previne raiz de números negativos ou divisão por zero (por perda de precisão flutuante)
+   double var_x = n * sum_x2 - sum_x * sum_x;
+   double var_y = n * sum_y2 - sum_y * sum_y;
    
-   Resultado = MathPow(m_stat.LRCorrelation(), 5)*Resultado;
+   if(var_x <= 0.0 || var_y <= 0.0)
+      return 0.0;
+      
+   double denominator = MathSqrt(var_x * var_y);
    
-   if(m_stat.Profit() > 0) {
-      if(Resultado > 0) {
-         return (Resultado)/1;
-      } else {
-         return (Resultado * -1)/1;
-      }
-   } else {
-      if(Resultado < 0) {
-         return (Resultado)/1;
-      } else {
-         return (Resultado * -1)/1;
-      }
-   }
-}
+   // Calcula a correlação final
+   double lr_correlation = (n * sum_xy - sum_x * sum_y) / denominator;
+   
+   return lr_correlation;
+  }
+
+//+------------------------------------------------------------------+
+//| Função OnTester                                                  |
+//+------------------------------------------------------------------+
+double OnTester()
+  {
+   double profit = TesterStatistics(STAT_PROFIT);
+   double cmc    = TesterStatistics(STAT_COMPLEX_CRITERION) + 1;
+   double sharpe = TesterStatistics(STAT_SHARPE_RATIO);
+   double drawdown = TesterStatistics(STAT_BALANCE_DDREL_PERCENT);
+   
+   double drawdownCorrigido = 2-(drawdown /100);
+
+   double sharpeAbsoluto = MathAbs(sharpe);
+   double sharpeRaiz = MathSqrt(sharpeAbsoluto);
+
+
+   // 2. Retorna a sua fórmula customizada (Custom Max no testador)
+   return profit * cmc * sharpeRaiz * drawdownCorrigido;
+  }
