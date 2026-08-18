@@ -91,12 +91,12 @@ class MainWindow(QMainWindow):
         widget_central = QWidget()
         self.setCentralWidget(widget_central)
         layout_principal = QHBoxLayout(widget_central)
-        layout_principal.setContentsMargins(20, 20, 20, 20)
-        layout_principal.setSpacing(20)
+        layout_principal.setContentsMargins(10, 10, 10, 10)
+        layout_principal.setSpacing(10)
 
         layout_principal.addWidget(self.criar_modulo_1(), 1) 
         layout_principal.addWidget(self.criar_modulo_2(), 2) 
-        layout_principal.addWidget(self.criar_modulo_3(), 2) 
+        layout_principal.addWidget(self.criar_modulo_3(), 1) 
 
     # --------------------------------------------------------
     # MÓDULO 1: Configuração Geral e Timeframes
@@ -104,9 +104,9 @@ class MainWindow(QMainWindow):
     def criar_modulo_1(self):
         grupo = QGroupBox("") 
         layout = QVBoxLayout(grupo)
-        layout.setSpacing(15)
+        layout.setSpacing(10)
         form = QFormLayout()
-        form.setSpacing(12)
+        form.setSpacing(10)
 
         self.input_ea = QLineEdit("Bollinger")
         self.input_ativo = QLineEdit("EURUSD_custom")
