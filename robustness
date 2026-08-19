@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
 
-"""
-ROBUSTNESS ANALYZER UNIVERSAL (REFATORADO)
-=============================================================================================================
-Gera estritamente os gráficos selecionados: Estabilidade de Platô + WinRate (Combinados) e 
-Drift Temporal (Heatmap).
-"""
-
 import os
 import math
 import sys
