@@ -248,7 +248,6 @@ Visual=0
             self.log("[ERRO] Arquivo robustness.py não encontrado!")
             return
 
-        # Pasta de análise centralizada para o script de robustez
         pasta_analise = self.WALK_DIR / configuracao
         pasta_analise.mkdir(parents=True, exist_ok=True)
 
@@ -272,14 +271,11 @@ Visual=0
         self.log(f"\n[SISTEMA] Iniciando análise de Robustez. Enviando XMLs para processamento.")
         
         try:
-            # Capturamos a saída e erros padrão gerados pelo subprocesso
             process_result = subprocess.run(command, cwd=str(self.BASE_DIR), capture_output=True, text=True)
             
-            # Se o subprocesso usou print() internamente, mandamos para a tela
             if process_result.stdout:
                 self.log(process_result.stdout.strip())
             
-            # Se o subprocesso gerou algum erro (stderr)
             if process_result.stderr:
                 self.log(f"[❌ ERRO NA ROBUSTEZ - STDERR]\n{process_result.stderr.strip()}")
             
@@ -290,6 +286,72 @@ Visual=0
 
         except Exception as e:
             self.log(f"[❌ ERRO FATAL AO CHAMAR ROBUSTNESS]\n{traceback.format_exc()}")
+
+    # ========================================================
+    # INTEGRAÇÃO AUTO-PRUNER (NOVO)
+    # ========================================================
+    def run_auto_pruner(self, configuracao):
+        pruner_path = self.BASE_DIR / "auto_pruner.py"
+        
+        if not pruner_path.exists():
+            self.log("[AVISO] auto_pruner.py não encontrado. Pulando poda de parâmetros.")
+            return
+
+        import re
+        def limpar_nome(texto):
+            return re.sub(r'[<>:"/\\|?*]', '_', str(texto))
+
+        ea_limpo = limpar_nome(self.EA_NAME)
+        intervalo_limpo = limpar_nome(self.PERIOD_NAME)
+        config_limpa = limpar_nome(configuracao)
+        
+        csv_dir = self.BASE_DIR / "robustness_output" / "csv" / ea_limpo / intervalo_limpo
+        csv_path = csv_dir / f"{config_limpa}_Dados_Master_Forward.csv"
+
+        if not csv_path.exists():
+            self.log(f"[ERRO] CSV Base não encontrado para o Auto-Pruner em:\n{csv_path}")
+            return
+
+        parametros_str = ",".join(self.PARAMS_OTIMIZADOS.keys())
+        
+        # Define Nível 1 e salva na pasta raiz dos resultados para a Interface ler
+        agressividade = "1" 
+        json_out = self.RESULTS_DIR / "novos_ranges.json"
+
+        command = [
+            sys.executable,
+            str(pruner_path),
+            str(csv_path),
+            parametros_str,
+            "--agressividade", agressividade,
+            "--out", str(json_out)
+        ]
+
+        try:
+            self.log("\n[SISTEMA] Iniciando matemática do Auto-Pruner...")
+            
+            # Força o ambiente filho a usar UTF-8 no console
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            
+            process_result = subprocess.run(
+                command, 
+                cwd=str(self.BASE_DIR), 
+                capture_output=True, 
+                text=True, 
+                encoding="utf-8", # Exige leitura em UTF-8
+                env=env           # Injeta a variável de ambiente
+            )
+            
+            if process_result.stdout:
+                self.log(process_result.stdout.strip())
+            
+            if process_result.stderr:
+                self.log(f"[❌ ERRO NO AUTO-PRUNER - STDERR]\n{process_result.stderr.strip()}")
+            
+        except Exception as e:
+            self.log(f"[❌ ERRO FATAL AO CHAMAR AUTO-PRUNER]\n{traceback.format_exc()}")
+
 
     # ========================================================
     # MOTOR PRINCIPAL
@@ -303,7 +365,6 @@ Visual=0
 
         windows = self.build_windows()
         
-        # Contador para a barra de progresso do app.py
         passo_atual = 0
 
         for configuracao in self.CONFIGS_ATIVAS:
@@ -319,4 +380,8 @@ Visual=0
                 passo_atual += 1
                 self.progress(passo_atual, len(self.CONFIGS_ATIVAS) * self.N_JANELAS)
                 
+            # Chama o analizador de robustez para criar o CSV
             self.run_robustness(configuracao, config_results)
+            
+            # Chama o Pruner para gerar o arquivo novos_ranges.json
+            self.run_auto_pruner(configuracao)
