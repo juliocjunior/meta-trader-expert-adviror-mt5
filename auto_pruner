@@ -1,0 +1,103 @@
+# -*- coding: utf-8 -*-
+"""
+AUTO PRUNER (PODADOR DE PARÂMETROS)
+Lê o CSV mestre do Robustness Analyzer e sugere matematicamente os novos ranges.
+"""
+
+import argparse
+import sys
+import json
+from pathlib import Path
+import pandas as pd
+
+def sugerir_afunilamento(caminho_csv: str, parametros: list, agressividade: int, output_json: str):
+    print("\n" + "="*80)
+    print(f"AUTO-PRUNING INICIADO | NÍVEL DE AGRESSIVIDADE: {agressividade}/5")
+    print("="*80)
+
+    try:
+        df_clean = pd.read_csv(caminho_csv, sep=";", decimal=",")
+    except Exception as e:
+        print(f"[ERRO] Não foi possível ler o CSV: {e}")
+        return
+
+    # Garante que as colunas essenciais existem
+    colunas_necessarias = parametros + ["profit", "trades"]
+    for col in colunas_necessarias:
+        if col not in df_clean.columns:
+            print(f"[ERRO] Coluna '{col}' não encontrada no CSV.")
+            return
+
+    df_clean = df_clean[colunas_necessarias].dropna()
+
+    # Métricas Globais para corte dinâmico
+    media_vol_global = df_clean['trades'].mean()
+    lucros_positivos = df_clean[df_clean['profit'] > 0]['profit']
+    lucros_negativos = df_clean[df_clean['profit'] < 0]['profit']
+    
+    media_ganhos = lucros_positivos.mean() if not lucros_positivos.empty else 0
+    media_perdas = lucros_negativos.mean() if not lucros_negativos.empty else 0
+
+    config_corte = {
+        1: {"lucro_min": media_perdas * 0.5, "vol_min": media_vol_global * 1.2},
+        2: {"lucro_min": media_perdas * 0.1, "vol_min": media_vol_global * 1.0},
+        3: {"lucro_min": 0.0, "vol_min": media_vol_global * 0.8},
+        4: {"lucro_min": media_ganhos * 0.1, "vol_min": media_vol_global * 0.6},
+        5: {"lucro_min": media_ganhos * 0.3, "vol_min": media_vol_global * 0.4}
+    }
+    
+    alvo = config_corte[agressividade]
+    novos_ranges = {}
+
+    for p in parametros:
+        agrupado = df_clean.groupby(p).agg(
+            lucro_medio=('profit', 'mean'),
+            volume_trades=('trades', 'sum')
+        ).sort_index()
+
+        if agrupado.empty or len(agrupado) < 3: 
+            novos_ranges[p] = {"status": "mantido"}
+            continue
+
+        agrupado['lucro_suavizado'] = agrupado['lucro_medio'].rolling(window=3, center=True, min_periods=1).mean()
+        agrupado['is_toxic'] = (agrupado['lucro_suavizado'] < alvo['lucro_min']) & (agrupado['volume_trades'] >= alvo['vol_min'])
+
+        range_antigo_min, range_antigo_max = agrupado.index.min(), agrupado.index.max()
+
+        if not agrupado['is_toxic'].any():
+            print(f"{p}: Mantido [{range_antigo_min} até {range_antigo_max}]")
+            novos_ranges[p] = {"start": float(range_antigo_min), "stop": float(range_antigo_max), "status": "mantido"}
+            continue
+
+        zonas_seguras = agrupado[~agrupado['is_toxic']].index
+        
+        if len(zonas_seguras) > 0:
+            novo_min, novo_max = zonas_seguras.min(), zonas_seguras.max()
+            if novo_min > range_antigo_min or novo_max < range_antigo_max:
+                print(f"{p}: Atualizado de [{range_antigo_min} a {range_antigo_max}] ---> NOVO: [{novo_min} a {novo_max}]")
+                novos_ranges[p] = {"start": float(novo_min), "stop": float(novo_max), "status": "reduzido"}
+            else:
+                novos_ranges[p] = {"start": float(range_antigo_min), "stop": float(range_antigo_max), "status": "mantido"}
+        else:
+            print(f"{p}: ALERTA! Toda a área foi reprovada. Range mantido por segurança.")
+            novos_ranges[p] = {"start": float(range_antigo_min), "stop": float(range_antigo_max), "status": "falha_critica"}
+
+    # Salva o resultado em JSON para o Manager poder ler
+    caminho_json = Path(output_json)
+    caminho_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(caminho_json, 'w', encoding='utf-8') as f:
+        json.dump(novos_ranges, f, indent=4)
+    
+    print(f"\n[SUCESSO] Novos ranges exportados para: {caminho_json}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Auto Pruner para MT5")
+    parser.add_argument("csv_path", help="Caminho do CSV gerado pelo Robustness Analyzer")
+    parser.add_argument("parametros", help="Lista de parâmetros (ex: 'StopLoss,TakeProfit')")
+    parser.add_argument("--agressividade", type=int, default=1, choices=[1,2,3,4,5], help="Nível de corte (1-5)")
+    parser.add_argument("--out", default="novos_ranges.json", help="Onde salvar o arquivo JSON de saída")
+    
+    args = parser.parse_args()
+    params_lista = [p.strip() for p in args.parametros.split(",") if p.strip()]
+    
+    sugerir_afunilamento(args.csv_path, params_lista, args.agressividade, args.out)
