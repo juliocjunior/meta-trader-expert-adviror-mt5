@@ -134,7 +134,7 @@ class MainWindow(QMainWindow):
 
         self.spin_treino = QSpinBox()
         self.spin_treino.setRange(1, 10)
-        self.spin_treino.setValue(4)
+        self.spin_treino.setValue(3)
 
         self.spin_forward = QSpinBox()
         self.spin_forward.setRange(1, 10)
