@@ -2,12 +2,16 @@
 
 import sys
 import traceback
+import json         # ### ADICIONADO PARA O AUTO-PRUNER ###
+import math         # ### ADICIONADO PARA O AUTO-PRUNER ###
+from pathlib import Path  # ### ADICIONADO PARA O AUTO-PRUNER ###
+
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QFormLayout, QGridLayout, QLineEdit, 
                              QComboBox, QSpinBox, QPushButton, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QCheckBox, QTextEdit, 
                              QProgressBar, QLabel, QGroupBox, QMessageBox)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer # ### QTimer ADICIONADO PARA O AUTO-PRUNER ###
 from PyQt5.QtGui import QFont
 
 # Importamos o motor do arquivo manager.py
@@ -144,6 +148,10 @@ class MainWindow(QMainWindow):
         self.spin_janelas.setRange(1, 20)
         self.spin_janelas.setValue(6)
 
+        # ### ADICIONADO PARA O AUTO-PRUNER ###
+        self.check_auto_pruner = QCheckBox("Loop Auto-Pruner (Reduzir até 10 passos)")
+        self.check_auto_pruner.setChecked(False)
+
         form.addRow("Nome do EA:", self.input_ea)
         form.addRow("Ativo:", self.input_ativo)
         form.addRow("Timeframes:", self.widget_tfs)
@@ -152,6 +160,7 @@ class MainWindow(QMainWindow):
         form.addRow("Anos Treino:", self.spin_treino)
         form.addRow("Anos Forward:", self.spin_forward)
         form.addRow("Qtd Janelas:", self.spin_janelas)
+        form.addRow("", self.check_auto_pruner) # ### ADICIONADO PARA O AUTO-PRUNER ###
 
         layout.addLayout(form)
         layout.addStretch() 
@@ -305,7 +314,7 @@ class MainWindow(QMainWindow):
     def iniciar_operacao(self):
         dados = self.capturar_dados()
         if not dados: 
-            return # Erro já exibido pelaMessageBox no capturar_dados()
+            return 
             
         if not dados['timeframes_selecionados'] or not dados['configuracoes_ativas']:
             QMessageBox.critical(self, "Erro", "Selecione pelo menos um Timeframe e um Cenário!")
@@ -315,7 +324,6 @@ class MainWindow(QMainWindow):
         self.btn_parar.setEnabled(True)
         self.console.clear()
         
-        # ZERAR BARRA DE PROGRESSO AO INICIAR
         self.barra_progresso.setValue(0)
         self.barra_progresso.setFormat("Processando... %p%")
         
@@ -330,8 +338,6 @@ class MainWindow(QMainWindow):
             self.worker.parar()
             
         self.btn_parar.setEnabled(False)
-        
-        # ZERAR BARRA DE PROGRESSO AO ABORTAR
         self.barra_progresso.setValue(0)
 
     def atualizar_progresso(self, atual, total):
@@ -342,21 +348,94 @@ class MainWindow(QMainWindow):
         self.btn_iniciar.setEnabled(True)
         self.btn_parar.setEnabled(False)
         
-        # VERIFICAÇÃO SEGURA SE CHEGOU EM 100% OU FOI ABORTADO
+        concluido_com_sucesso = False
         if self.barra_progresso.value() == self.barra_progresso.maximum() and self.barra_progresso.maximum() > 0:
             self.barra_progresso.setFormat("Concluído 100%")
+            concluido_com_sucesso = True
         else:
             self.barra_progresso.setFormat("Interrompido")
 
+        # ### ADICIONADO PARA O AUTO-PRUNER (LÓGICA DE LOOP) ###
+        if concluido_com_sucesso and self.check_auto_pruner.isChecked():
+            self.processar_auto_pruner()
+
+
+    def processar_auto_pruner(self):
+            # Localiza o arquivo na pasta base do projeto
+            caminho_base = Path(__file__).resolve().parent
+            json_path = caminho_base / "results" / "novos_ranges.json"
+            
+            if not json_path.exists():
+                self.console.append("\n⚠️ Auto-Pruner ativado, mas o arquivo 'novos_ranges.json' não foi encontrado.")
+                return
+
+            with open(json_path, 'r', encoding='utf-8') as f:
+                novos_ranges = json.load(f)
+
+            precisa_rodar_de_novo = False
+            houve_reducao_real = False  # <--- TRAVA CONTRA LOOP INFINITO
+            
+            self.console.append("\n🔄 ANALISANDO RANGES PARA O PRÓXIMO CICLO...")
+
+            # Varre as linhas da tabela
+            for row in range(self.tabela.rowCount()):
+                item_nome = self.tabela.item(row, 0)
+                if not item_nome: continue
+                
+                param_name = item_nome.text().strip()
+
+                if param_name in novos_ranges:
+                    dados_pruner = novos_ranges[param_name]
+                    
+                    if dados_pruner.get("status") in ["reduzido", "mantido"]:
+                        # Se ele cortou algo de fato, marcamos a trava como verdadeira
+                        if dados_pruner.get("status") == "reduzido":
+                            houve_reducao_real = True
+
+                        novo_start = float(dados_pruner["start"])
+                        novo_stop = float(dados_pruner["stop"])
+                        step_atual = float(self.tabela.item(row, 2).text().replace(',', '.'))
+
+                        # Atualiza os valores na interface (Tabela)
+                        self.tabela.setItem(row, 1, QTableWidgetItem(f"{novo_start:g}"))
+                        self.tabela.setItem(row, 3, QTableWidgetItem(f"{novo_stop:g}"))
+
+                        qtd_passos = math.ceil((novo_stop - novo_start) / step_atual)
+
+                        # ALVO REDUZIDO PARA 3 PASSOS
+                        if qtd_passos > 3:
+                            self.console.append(f"  -> {param_name}: Falta podar ({qtd_passos} passos).")
+                            precisa_rodar_de_novo = True
+                        else:
+                            self.console.append(f"  -> {param_name}: ✅ Meta atingida ({qtd_passos} passos).")
+
+            if precisa_rodar_de_novo:
+                # Verifica a trava contra loop infinito
+                if houve_reducao_real:
+                    self.console.append("\n🚀 Reiniciando WFO automaticamente com os novos ranges em 5 segundos...")
+                    try:
+                        json_path.unlink() # Apaga o JSON lido para não confundir a próxima leitura
+                    except Exception:
+                        pass
+                    
+                    # Aguarda 5 segundos para a interface "respirar" e ver os resultados
+                    QTimer.singleShot(5000, self.iniciar_operacao) 
+                else:
+                    # Se precisa rodar, mas nenhum parâmetro foi reduzido (tudo "mantido"), evita o loop infinito!
+                    self.console.append("\n⚠️ ALERTA DE SEGURANÇA: O Auto-Pruner não conseguiu mais reduzir nenhum range com a agressividade atual (Limites mantidos).")
+                    self.console.append("🛑 Loop interrompido para evitar ciclo infinito. Tente aumentar o Step manualmente.")
+                    self.check_auto_pruner.setChecked(False)
+            else:
+                self.console.append("\n🎉 AUTO-PRUNING FINALIZADO! Todos os parâmetros chegaram ao limite de 3 passos ou menos.")
+                self.check_auto_pruner.setChecked(False)
     # --------------------------------------------------------
     # SEGURANÇA: Fechar o MT5 ao fechar a janela
     # --------------------------------------------------------
     def closeEvent(self, event):
-        """Sobrescreve o evento de fechar a janela (Botão 'X') para limpar threads ativas"""
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.console.append("\n[SISTEMA] Aguardando o encerramento seguro do MetaTrader e subprocessos...")
             self.parar_operacao()
-            self.worker.wait() # Aguarda a thread finalizar o encerramento limpo antes de destruir a janela
+            self.worker.wait() 
         event.accept()
 
     def aplicar_estilo_qss(self):
