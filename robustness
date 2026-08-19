@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 
+"""
+ROBUSTNESS ANALYZER UNIVERSAL (REFATORADO)
+=============================================================================================================
+Gera estritamente os gráficos selecionados: Estabilidade de Platô + WinRate (Combinados) e 
+Drift Temporal (Heatmap).
+"""
+
 import os
 import math
 import sys
@@ -235,6 +242,7 @@ class RobustnessAnalyzer:
             for registros in dados_forward.values():
                 todos_registros.extend(registros)
             df_forward_all = pd.DataFrame(todos_registros)
+            self._salvar_csv(df_forward_all, "Dados_Master_Forward")
 
             for i, p in enumerate(self.parametros):
                 # ==============================
