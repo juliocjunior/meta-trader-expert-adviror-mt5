@@ -3,8 +3,8 @@
 """
 ROBUSTNESS ANALYZER UNIVERSAL (REFATORADO)
 =============================================================================================================
-Gera estritamente os gráficos selecionados: Estabilidade de Platô, Qualidade (PF vs Trades), 
-Risco (Profit vs Drawdown), Drift Temporal (Heatmap) e Consistência (WinRate).
+Gera estritamente os gráficos selecionados: Estabilidade de Platô + WinRate (Combinados), 
+Qualidade (PF vs Trades), Risco (Profit vs Drawdown) e Drift Temporal (Heatmap).
 """
 
 import os
@@ -211,8 +211,9 @@ class RobustnessAnalyzer:
     # ============================================================
     # VISUALIZAÇÃO E GRÁFICOS (ALTA RESOLUÇÃO)
     # ============================================================
-    def gerar_png_estabilidade_plato(self, resultados_profit: Dict[str, Any], estatisticas: Dict[str, Any]) -> None:
-        metrica_nome = "Plateau_Stability_Analysis"
+    def gerar_png_plato_e_winrate(self, resultados_profit: Dict[str, Any], dados_forward: Dict[int, List[Dict[str, Any]]], estatisticas: Dict[str, Any]) -> None:
+        """Gera um gráfico combinado em grade 2xN (Linha 1: Plateau Stability | Linha 2: WinRate Consistency)"""
+        metrica_nome = "Plateau_Stability_and_WinRate"
         caminho = self.png_dir / f"{limpar_nome_arquivo(self.configuracao)}_{metrica_nome}.png"
         
         mp, mt, pp = estatisticas["media_profit"], estatisticas["media_trades"], estatisticas["percentual_positivo"]
@@ -220,16 +221,27 @@ class RobustnessAnalyzer:
         info = f"Média Profit: {mp:.2f}   |   Média Trades: {mt:.2f}   |   % Profit positivo: {pp:.2f}% ({cp}/{tc})"
 
         qtd_params = len(self.parametros)
-        cols = min(3, qtd_params) if qtd_params > 0 else 1
-        rows = math.ceil(qtd_params / cols) if qtd_params > 0 else 1
+        cols = qtd_params if qtd_params > 0 else 1
+        rows = 2
 
-        fig, axes = plt.subplots(rows, cols, figsize=(26, 9 * rows))
-        axes_flat = [axes] if qtd_params <= 1 else axes.flatten()
+        # Aumentamos a largura dinamicamente mantendo a proporção original de ~8.66 polegadas por coluna
+        largura_coluna = 26.0 / 3.0  
+        altura_linha = 9.0
+        
+        fig, axes = plt.subplots(rows, cols, figsize=(largura_coluna * cols, altura_linha * rows))
+        
+        # Garante que 'axes' seja sempre uma matriz 2D (rows x cols)
+        if cols == 1:
+            axes = np.array(axes).reshape(2, 1)
 
         df_csv_list = []
+        resultados_tr = {p: {j: self.calcular_medias_janela(dados_forward[j], p, "trades") for j in range(1, self.n_janelas+1)} for p in self.parametros}
 
         for i, p in enumerate(self.parametros):
-            ax = axes_flat[i]
+            # ==============================
+            # LINHA 0: ESTABILIDADE DO PLATÔ
+            # ==============================
+            ax_plato = axes[0, i]
             
             media_final = self.calcular_media_das_janelas(resultados_profit[p])
             x = sorted(media_final.keys())
@@ -254,31 +266,62 @@ class RobustnessAnalyzer:
                 
                 df_plot = df_uniform.loc[x_array]
                 
-                ax.fill_between(df_plot.index, df_plot['mean'] - df_plot['std'], df_plot['mean'] + df_plot['std'], 
+                ax_plato.fill_between(df_plot.index, df_plot['mean'] - df_plot['std'], df_plot['mean'] + df_plot['std'], 
                                 color='tab:blue', alpha=0.15, label='Volatilidade (± 1 Std Dev)')
-                ax.plot(df_plot.index, df_plot['mean'], color='tab:blue', marker='o', linewidth=3, 
+                ax_plato.plot(df_plot.index, df_plot['mean'], color='tab:blue', marker='o', linewidth=3, 
                         markersize=7, label='Média da Vizinhança')
-                ax.plot(df_plot.index, df_plot['y'], color='gray', linestyle=':', linewidth=2, alpha=0.6, label='Profit Real')
+                ax_plato.plot(df_plot.index, df_plot['y'], color='gray', linestyle=':', linewidth=2, alpha=0.6, label='Profit Real')
                 
-                ax.legend(loc="upper left", fontsize=12)
+                ax_plato.legend(loc="upper left", fontsize=12)
                 
                 df_csv = df_plot.rename(columns={'y': f'{p}_Profit_Real', 'mean': f'{p}_Media_Vizinhos', 'std': f'{p}_Std_Dev'})
                 df_csv.index.name = p
                 df_csv_list.append(df_csv)
             else:
-                ax.plot(x, y, marker="o", color="tab:blue", linewidth=3, markersize=7)
+                ax_plato.plot(x, y, marker="o", color="tab:blue", linewidth=3, markersize=7)
                 
-            ax.axhline(0, linewidth=1.2, alpha=0.4, color="black")
-            ax.set_title(f"Estabilidade da Vizinhança: {p}", fontsize=15, fontweight="bold")
-            ax.tick_params(axis='both', which='major', labelsize=12)
-            ax.grid(True, alpha=0.3)
+            ax_plato.axhline(0, linewidth=1.2, alpha=0.4, color="black")
+            ax_plato.set_title(f"{p} (Estabilidade da Vizinhança)", fontsize=15, fontweight="bold")
+            ax_plato.set_ylabel("Profit ($)", color="tab:blue", fontweight="bold", fontsize=13)
+            ax_plato.tick_params(axis='both', which='major', labelsize=12)
+            ax_plato.grid(True, alpha=0.3)
+
+            # ==============================
+            # LINHA 1: WINRATE CONSISTENCY
+            # ==============================
+            ax_wr = axes[1, i]
+            ax_wr2 = ax_wr.twinx()
             
-        for i in range(qtd_params, len(axes_flat)): axes_flat[i].axis("off")
+            scores = self.calcular_winrate_consistencia(dados_forward, p)
+            media_tr = self.calcular_media_das_janelas(resultados_tr[p])
+            
+            x_wr = sorted(scores.keys())
+            y_wr = [scores[v] for v in x_wr]
+            y_tr = [media_tr.get(v, 0) for v in x_wr]
+            
+            if x_wr: 
+                l2 = ax_wr2.fill_between(x_wr, 0, y_tr, color='gray', alpha=0.2, step="mid", label='Volume de Trades')
+                l1, = ax_wr.plot(x_wr, y_wr, marker="o", linewidth=3.0, markersize=7, color="tab:blue", label="Win Rate Médio")
+                ax_wr.axhline(50, linewidth=2.0, alpha=0.8, color="red", linestyle="--", label="Win Rate = 50%")
+                
+                lns = [l1, l2, ax_wr.lines[-1]]
+                ax_wr.legend(lns, [l.get_label() for l in lns], loc="upper left", fontsize=12)
+            
+            ax_wr.set_ylim(-5, 105)
+            ax_wr2.set_ylim(bottom=0)
+            
+            ax_wr.set_title(f"{p} (Win Rate vs Amostra)", fontsize=15, fontweight="bold")
+            ax_wr.set_ylabel("Win Rate (%)", color="tab:blue", fontweight="bold", fontsize=13)
+            ax_wr2.set_ylabel("Quantidade de Trades", color="gray", fontweight="bold", fontsize=13)
+            
+            ax_wr.tick_params(axis='both', which='major', labelsize=12)
+            ax_wr2.tick_params(axis='both', which='major', labelsize=12)
+            ax_wr.grid(True, alpha=0.3)
 
         if df_csv_list:
             self._salvar_csv(pd.concat(df_csv_list, axis=1), "Plateau_Stability_Data")
 
-        titulo_combinado = f"ESTABILIDADE DO PLATÔ — Média e Volatilidade da Vizinhança\nConfiguração: {self.configuracao}   |   {info}"
+        titulo_combinado = f"ESTABILIDADE DO PLATÔ E CONSISTÊNCIA DE WIN RATE\nConfiguração: {self.configuracao}   |   {info}"
         fig.suptitle(titulo_combinado, fontsize=22, fontweight="bold")
         
         plt.tight_layout(rect=[0, 0, 1, 0.96 - (0.005 * rows)])
@@ -390,63 +433,6 @@ class RobustnessAnalyzer:
         plt.close()
         print(f"  [SALVO] {metrica_nome}")
 
-    def gerar_png_winrate(self, dados_forward: Dict[int, List[Dict[str, Any]]], estatisticas: Dict[str, Any]) -> None:
-        metrica_nome = "WinRate_Consistency"
-        caminho = self.png_dir / f"{limpar_nome_arquivo(self.configuracao)}_{metrica_nome}.png"
-        
-        mp, mt, pp = estatisticas["media_profit"], estatisticas["media_trades"], estatisticas["percentual_positivo"]
-        tc, cp = estatisticas["total_configuracoes"], estatisticas["configuracoes_positivas"]
-        info = f"Média Profit: {mp:.2f}   |   Média Trades: {mt:.2f}   |   % Profit positivo: {pp:.2f}% ({cp}/{tc})"
-
-        qtd_params = len(self.parametros)
-        cols = min(3, qtd_params) if qtd_params > 0 else 1
-        rows = math.ceil(qtd_params / cols) if qtd_params > 0 else 1
-
-        fig, axes = plt.subplots(rows, cols, figsize=(26, 9 * rows))
-        axes_flat = [axes] if qtd_params <= 1 else axes.flatten()
-
-        resultados_tr = {p: {j: self.calcular_medias_janela(dados_forward[j], p, "trades") for j in range(1, self.n_janelas+1)} for p in self.parametros}
-
-        for i, p in enumerate(self.parametros):
-            ax1 = axes_flat[i]
-            ax2 = ax1.twinx()
-            
-            scores = self.calcular_winrate_consistencia(dados_forward, p)
-            media_tr = self.calcular_media_das_janelas(resultados_tr[p])
-            
-            x = sorted(scores.keys())
-            y = [scores[v] for v in x]
-            y_tr = [media_tr.get(v, 0) for v in x]
-            
-            if x: 
-                l2 = ax2.fill_between(x, 0, y_tr, color='gray', alpha=0.2, step="mid", label='Volume de Trades')
-                l1, = ax1.plot(x, y, marker="o", linewidth=3.0, markersize=7, color="tab:blue", label="Win Rate Médio")
-                ax1.axhline(50, linewidth=2.0, alpha=0.8, color="red", linestyle="--", label="Win Rate = 50%")
-                
-                lns = [l1, l2, ax1.lines[-1]]
-                ax1.legend(lns, [l.get_label() for l in lns], loc="upper left", fontsize=12)
-            
-            ax1.set_ylim(-5, 105)
-            ax2.set_ylim(bottom=0)
-            
-            ax1.set_title(f"{p} (Win Rate vs Amostra)", fontsize=15, fontweight="bold")
-            ax1.set_ylabel("Win Rate (%)", color="tab:blue", fontweight="bold", fontsize=13)
-            ax2.set_ylabel("Quantidade de Trades", color="gray", fontweight="bold", fontsize=13)
-            
-            ax1.tick_params(axis='both', which='major', labelsize=12)
-            ax2.tick_params(axis='both', which='major', labelsize=12)
-            ax1.grid(True, alpha=0.3)
-            
-        for i in range(qtd_params, len(axes_flat)): axes_flat[i].axis("off")
-
-        titulo_combinado = f"FORWARD — Consistência (Win Rate %) vs Amostra\nConfiguração: {self.configuracao}   |   {info}"
-        fig.suptitle(titulo_combinado, fontsize=22, fontweight="bold")
-        
-        plt.tight_layout(rect=[0, 0, 1, 0.96 - (0.005 * rows)])
-        plt.savefig(str(caminho), dpi=300, bbox_inches="tight")
-        plt.close()
-        print(f"  [SALVO] {metrica_nome}")
-
     def gerar_png_heatmap_temporal(self, dados_forward: Dict[int, List[Dict[str, Any]]], estatisticas: Dict[str, Any]) -> None:
         metrica_nome = "Temporal_Heatmap_Parameter_Drift"
         caminho = self.png_dir / f"{limpar_nome_arquivo(self.configuracao)}_{metrica_nome}.png"
@@ -518,13 +504,11 @@ class RobustnessAnalyzer:
         res_pf = {p: {j: self.calcular_medias_janela(dados_forward[j], p, "profit_factor") for j in range(1, self.n_janelas+1)} for p in self.parametros}
         res_tr = {p: {j: self.calcular_medias_janela(dados_forward[j], p, "trades") for j in range(1, self.n_janelas+1)} for p in self.parametros}
         
-        # Chamada individual EXCLUSIVA para os 5 gráficos solicitados (passando as estatísticas)
-        self.gerar_png_estabilidade_plato(res_profit_global, estatisticas)
+        # Chamada individual EXCLUSIVA para os gráficos solicitados
+        self.gerar_png_plato_e_winrate(res_profit_global, dados_forward, estatisticas)
         self.gerar_png_profit_factor_trades(res_pf, res_tr, estatisticas)
         self.gerar_png_profit_drawdown(res_profit_global, res_dd, estatisticas)
         self.gerar_png_heatmap_temporal(dados_forward, estatisticas)
-        self.gerar_png_winrate(dados_forward, estatisticas)
-
 
 # ============================================================
 # ENTRYPOINT
@@ -546,7 +530,7 @@ def main() -> int:
 
         analyzer = RobustnessAnalyzer(configuracao, parametros, ea_nome, n_janelas, xml_dir, intervalo)
         analyzer.run()
-        print("\n[SUCESSO] Processamento concluído. Apenas os 5 gráficos solicitados foram gerados.")
+        print("\n[SUCESSO] Processamento concluído. Apenas os 4 gráficos finais foram gerados.")
         
     except Exception as e:
         print(f"\n[ERRO] Ocorreu uma falha no processamento: {e}")
