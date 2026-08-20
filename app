@@ -137,16 +137,16 @@ class MainWindow(QMainWindow):
         self.spin_ano.setValue(2025)
 
         self.spin_treino = QSpinBox()
-        self.spin_treino.setRange(1, 10)
-        self.spin_treino.setValue(3)
+        self.spin_treino.setRange(1, 100)
+        self.spin_treino.setValue(24)
 
         self.spin_forward = QSpinBox()
-        self.spin_forward.setRange(1, 10)
-        self.spin_forward.setValue(1)
+        self.spin_forward.setRange(1, 100)
+        self.spin_forward.setValue(6)
 
         self.spin_janelas = QSpinBox()
         self.spin_janelas.setRange(1, 20)
-        self.spin_janelas.setValue(6)
+        self.spin_janelas.setValue(5)
 
         # ### ADICIONADO PARA O AUTO-PRUNER ###
         self.check_auto_pruner = QCheckBox("Loop Auto-Pruner (Reduzir até 10 passos)")
@@ -157,8 +157,8 @@ class MainWindow(QMainWindow):
         form.addRow("Timeframes:", self.widget_tfs)
         form.addRow(QLabel(" ")) 
         form.addRow("Otimizar até o fim do ano:", self.spin_ano)
-        form.addRow("Anos Treino:", self.spin_treino)
-        form.addRow("Anos Forward:", self.spin_forward)
+        form.addRow("Meses de Treino:", self.spin_treino)
+        form.addRow("Meses de Forward:", self.spin_forward)
         form.addRow("Qtd Janelas:", self.spin_janelas)
         form.addRow("", self.check_auto_pruner) # ### ADICIONADO PARA O AUTO-PRUNER ###
 
@@ -303,9 +303,9 @@ class MainWindow(QMainWindow):
             "ea_name": self.input_ea.text().strip(),
             "symbol": self.input_ativo.text().strip(),
             "timeframes_selecionados": tfs_selecionados,
-            "train_until_year": self.spin_ano.value() - 1,
-            "train_years": self.spin_treino.value(),
-            "forward_years": self.spin_forward.value(),
+            "train_until_year": self.spin_ano.value(),
+            "train_months": self.spin_treino.value(), 
+            "forward_months": self.spin_forward.value(),
             "n_janelas": self.spin_janelas.value(),
             "parametros_otimizados": parametros,
             "configuracoes_ativas": configs_ativas
