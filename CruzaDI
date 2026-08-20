@@ -10,153 +10,170 @@ CTradeStatistics m_stat;
 
 
 enum OptionsEnum {
-// Incremento de 1 de 1 a 30
-  Option1 = 1,   // 1
-  Option2 = 2,   // 2
-  Option3 = 3,   // 3
-  Option4 = 4,   // 4
-  Option5 = 5,   // 5
-  Option6 = 6,   // 6
-  Option7 = 7,   // 7
-  Option8 = 8,   // 8
-  Option9 = 9,   // 9
-  Option10 = 10, // 10
-  Option11 = 11, // 11
-  Option12 = 12, // 12
-  Option13 = 13, // 13
-  Option14 = 14, // 14
-  Option15 = 15, // 15
-  Option16 = 16, // 16
-  Option17 = 17, // 17
-  Option18 = 18, // 18
-  Option19 = 19, // 19
-  Option20 = 20, // 20
-  Option21 = 21, // 21
-  Option22 = 22, // 22
-  Option23 = 23, // 23
-  Option24 = 24, // 24
-  Option25 = 25, // 25
-  Option26 = 26, // 26
-  Option27 = 27, // 27 
-  Option28 = 28, // 28
-  Option29 = 29, // 29
-  Option30 = 30, // 30
+// Incremento de 1 (do 1 ao 20)
+  Option1 = 1,    // 1
+  Option2 = 2,    // 2
+  Option3 = 3,    // 3
+  Option4 = 4,    // 4
+  Option5 = 5,    // 5
+  Option6 = 6,    // 6
+  Option7 = 7,    // 7
+  Option8 = 8,    // 8
+  Option9 = 9,    // 9
+  Option10 = 10,  // 10
+  Option11 = 11,  // 11
+  Option12 = 12,  // 12
+  Option13 = 13,  // 13
+  Option14 = 14,  // 14
+  Option15 = 15,  // 15
+  Option16 = 16,  // 16
+  Option17 = 17,  // 17
+  Option18 = 18,  // 18
+  Option19 = 19,  // 19
+  Option20 = 20,  // 20
 
-// Incremento de 2 de 30 a 100
-  Option31 = 32,  // 32
-  Option32 = 34,  // 34
-  Option33 = 36,  // 36
-  Option34 = 38,  // 38
-  Option35 = 40,  // 40
-  Option36 = 42,  // 42
-  Option37 = 44,  // 44
-  Option38 = 46,  // 46
-  Option39 = 48,  // 48
-  Option40 = 50,  // 50
-  Option41 = 52,  // 52
-  Option42 = 54,  // 54
-  Option43 = 56,  // 56
-  Option44 = 58,  // 58
-  Option45 = 60,  // 60
-  Option46 = 62,  // 62
-  Option47 = 64,  // 64
-  Option48 = 66,  // 66
-  Option49 = 68,  // 68
-  Option50 = 70,  // 70
-  Option51 = 72,  // 72
-  Option52 = 74,  // 74
-  Option53 = 76,  // 76
-  Option54 = 78,  // 78
-  Option55 = 80,  // 80
-  Option56 = 82,  // 82
-  Option57 = 84,  // 84
-  Option58 = 86,  // 86
-  Option59 = 88,  // 88
-  Option60 = 90,  // 90
-  Option61 = 92,  // 92
-  Option62 = 94,  // 94
-  Option63 = 96,  // 96
-  Option64 = 98,  // 98
-  Option65 = 100, // 100
+// Incremento de 2 (do 22 ao 40)
+  Option21 = 22,  // 22
+  Option22 = 24,  // 24
+  Option23 = 26,  // 26
+  Option24 = 28,  // 28
+  Option25 = 30,  // 30
+  Option26 = 32,  // 32
+  Option27 = 34,  // 34
+  Option28 = 36,  // 36
+  Option29 = 38,  // 38
+  Option30 = 40,  // 40
 
-// Incremento de 10 de 100 a 300
-  Option66 = 110, // 110
-  Option67 = 120, // 120
-  Option68 = 130, // 130
-  Option69 = 140, // 140
-  Option70 = 150, // 150
-  Option71 = 160, // 160
-  Option72 = 170, // 170
-  Option73 = 180, // 180
-  Option74 = 190, // 190
-  Option75 = 200, // 200
-  Option76 = 210, // 210
-  Option77 = 220, // 220
-  Option78 = 230, // 230
-  Option79 = 240, // 240
-  Option80 = 250, // 250
-  Option81 = 260, // 260
-  Option82 = 270, // 270
-  Option83 = 280, // 280
-  Option84 = 290, // 290
-  Option85 = 300, // 300
+// Incremento de 4 (do 44 ao 80)
+  Option31 = 44,  // 44
+  Option32 = 48,  // 48
+  Option33 = 52,  // 52
+  Option34 = 56,  // 56
+  Option35 = 60,  // 60
+  Option36 = 64,  // 64
+  Option37 = 68,  // 68
+  Option38 = 72,  // 72
+  Option39 = 76,  // 76
+  Option40 = 80,  // 80
 
-// Incremento de 20 de 300 a 1000
-  Option86 = 320,  // 320
-  Option87 = 340,  // 340
-  Option88 = 360,  // 360
-  Option89 = 380,  // 380
-  Option90 = 400,  // 400
-  Option91 = 420,  // 420
-  Option92 = 440,  // 440
-  Option93 = 460,  // 460
-  Option94 = 480,  // 480
-  Option95 = 500,  // 500
-  Option96 = 520,  // 520
-  Option97 = 540,  // 540
-  Option98 = 560,  // 560
-  Option99 = 580,  // 580
-  Option100 = 600, // 600
-  Option101 = 620, // 620
-  Option102 = 640, // 640
-  Option103 = 660, // 660
-  Option104 = 680, // 680
-  Option105 = 700, // 700
-  Option106 = 720, // 720
-  Option107 = 740, // 740
-  Option108 = 760, // 760
-  Option109 = 780, // 780
-  Option110 = 800, // 800
-  Option111 = 820, // 820
-  Option112 = 840, // 840
-  Option113 = 860, // 860
-  Option114 = 880, // 880
-  Option115 = 900, // 900
-  Option116 = 920, // 920
-  Option117 = 940, // 940
-  Option118 = 960, // 960
-  Option119 = 980, // 980
-  Option120 = 1000, // 1000
-  Option121 = 1100, // 1100
-  Option122 = 1200, // 1200
-  Option123 = 1300, // 1300
-  Option124 = 1400, // 1400
-  Option125 = 1500,  // 1500
-   Option126 = 1600, // 1600
-   Option127 = 1700, // 1700
-   Option128 = 1800, // 1800
-   Option129 = 1900, // 1900
-   Option130 = 2000, // 2000
-   Option131 = 2100, // 2100
-   Option132 = 2200, // 2200
-   Option133 = 2300, // 2300
-   Option134 = 2400, // 2400
-   Option135 = 2500, // 2500
-   Option136 = 2600, // 2600
-   Option137 = 2700, // 2700
-   Option138 = 2800, // 2800
-   Option139 = 2900, // 2900
-   Option140 = 3000  // 3000
+// Incremento de 8 (do 88 ao 160)
+  Option41 = 88,  // 88
+  Option42 = 96,  // 96
+  Option43 = 104, // 104
+  Option44 = 112, // 112
+  Option45 = 120, // 120
+  Option46 = 128, // 128
+  Option47 = 136, // 136
+  Option48 = 144, // 144
+  Option49 = 152, // 152
+  Option50 = 160, // 160
+
+// Incremento de 16 (do 176 ao 320)
+  Option51 = 176, // 176
+  Option52 = 192, // 192
+  Option53 = 208, // 208
+  Option54 = 224, // 224
+  Option55 = 240, // 240
+  Option56 = 256, // 256
+  Option57 = 272, // 272
+  Option58 = 288, // 288
+  Option59 = 304, // 304
+  Option60 = 320, // 320
+
+// Incremento de 32 (do 352 ao 640)
+  Option61 = 352, // 352
+  Option62 = 384, // 384
+  Option63 = 416, // 416
+  Option64 = 448, // 448
+  Option65 = 480, // 480
+  Option66 = 512, // 512
+  Option67 = 544, // 544
+  Option68 = 576, // 576
+  Option69 = 608, // 608
+  Option70 = 640, // 640
+
+// Incremento de 64 (do 704 ao 1280)
+  Option71 = 704, // 704
+  Option72 = 768, // 768
+  Option73 = 832, // 832
+  Option74 = 896, // 896
+  Option75 = 960, // 960
+  Option76 = 1024, // 1024
+  Option77 = 1088, // 1088
+  Option78 = 1152, // 1152
+  Option79 = 1216, // 1216
+  Option80 = 1280, // 1280
+
+// Incremento de 128 (do 1408 ao 2560)
+  Option81 = 1408, // 1408
+  Option82 = 1536, // 1536
+  Option83 = 1664, // 1664
+  Option84 = 1792, // 1792
+  Option85 = 1920, // 1920
+  Option86 = 2048, // 2048
+  Option87 = 2176, // 2176
+  Option88 = 2304, // 2304
+  Option89 = 2432, // 2432
+  Option90 = 2560, // 2560
+
+// Incremento de 256 (Passando a barreira dos 3000)
+  Option91 = 2816, // 2816
+  Option92 = 3072  // 3072
+};
+
+
+enum Enum_WFO_Steps {
+// Incremento de 1 (do 1 ao 20)
+  OptWFO_1 = 1,   // 1
+  OptWFO_2 = 2,   // 2
+  OptWFO_3 = 3,   // 3
+  OptWFO_4 = 4,   // 4
+  OptWFO_5 = 5,   // 5
+  OptWFO_6 = 6,   // 6
+  OptWFO_7 = 7,   // 7
+  OptWFO_8 = 8,   // 8
+  OptWFO_9 = 9,   // 9
+  OptWFO_10 = 10, // 10
+  OptWFO_11 = 11, // 11
+  OptWFO_12 = 12, // 12
+  OptWFO_13 = 13, // 13
+  OptWFO_14 = 14, // 14
+  OptWFO_15 = 15, // 15
+  OptWFO_16 = 16, // 16
+  OptWFO_17 = 17, // 17
+  OptWFO_18 = 18, // 18
+  OptWFO_19 = 19, // 19
+  OptWFO_20 = 20, // 20
+
+// Incremento de 2 (do 20 ao 40)
+  OptWFO_21 = 22, // 22
+  OptWFO_22 = 24, // 24
+  OptWFO_23 = 26, // 26
+  OptWFO_24 = 28, // 28
+  OptWFO_25 = 30, // 30
+  OptWFO_26 = 32, // 32
+  OptWFO_27 = 34, // 34
+  OptWFO_28 = 36, // 36
+  OptWFO_29 = 38, // 38
+  OptWFO_30 = 40, // 40
+
+// Incremento de 4 (do 40 ao 80)
+  OptWFO_31 = 44, // 44
+  OptWFO_32 = 48, // 48
+  OptWFO_33 = 52, // 52
+  OptWFO_34 = 56, // 56
+  OptWFO_35 = 60, // 60
+  OptWFO_36 = 64, // 64
+  OptWFO_37 = 68, // 68
+  OptWFO_38 = 72, // 72
+  OptWFO_39 = 76, // 76
+  OptWFO_40 = 80, // 80
+
+// Incremento de 5 (do 80 ao 99)
+  OptWFO_41 = 85, // 85
+  OptWFO_42 = 90, // 90
+  OptWFO_43 = 95, // 95
+  OptWFO_44 = 99  // 99
 };
 
 // INPUTS
@@ -173,10 +190,10 @@ input OptionsEnum Media_Filtro_Estocastico1 = Option1;
 
 input group "Filtro Filtro_ADX1"
 input int Linha_Filtro_ADX1 = 25;
-input OptionsEnum Periodo_Filtro_ADX1 = Option1;
+input Enum_WFO_Steps Periodo_Filtro_ADX1 = Option1;
 
 input group "ADX1"
-input OptionsEnum Periodo_ADX1 = Option1;
+input Enum_WFO_Steps Periodo_ADX1 = Option1;
 
 
 int mintrades = 500;
@@ -464,41 +481,19 @@ long GetTicketByMagicNumber(int magicNumber)
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-double OnTester() {
-  //int handle = iCustom(_Symbol, PERIOD_CURRENT, "TradeBuddyTesterMT5");
-  //ChartIndicatorAdd(0,0,handle);
+double OnTester()
+  {
+   double profit = TesterStatistics(STAT_PROFIT);
+   double cmc    = TesterStatistics(STAT_COMPLEX_CRITERION) + 1;
+   double sharpe = TesterStatistics(STAT_SHARPE_RATIO);
+   double drawdown = TesterStatistics(STAT_BALANCE_DDREL_PERCENT);
+   
+   double drawdownCorrigido = 2-(drawdown /100);
 
-// Verifica se o cálculo das estatísticas foi realizado com sucesso
-   if(!m_stat.Calculate()) {
-      return 0;
-   }
-   
-// Verifica o número de trades
-   double Resultado = 0;
-   double SharpeRadio = MathPow(TesterStatistics(STAT_SHARPE_RATIO), 1);
-   double Trades = MathPow(m_stat.Trades(), 1); 
-   double modmintrades = MathPow(mintrades, 1);
-   
-   if (m_stat.Trades() < mintrades && m_stat.Trades() > 30) {
-      Resultado = Trades * SharpeRadio;
-      
-   } else if (m_stat.Trades() > mintrades){
-      Resultado = modmintrades * SharpeRadio;
-   }
-   
-   Resultado = MathPow(m_stat.LRCorrelation(), 5)*Resultado;
-   
-   if(m_stat.Profit() > 0) {
-      if(Resultado > 0) {
-         return (Resultado)/1;
-      } else {
-         return (Resultado * -1)/1;
-      }
-   } else {
-      if(Resultado < 0) {
-         return (Resultado)/1;
-      } else {
-         return (Resultado * -1)/1;
-      }
-   }
-}
+   double sharpeAbsoluto = MathAbs(sharpe);
+   double sharpeRaiz = MathSqrt(sharpeAbsoluto);
+
+
+   // 2. Retorna a sua fórmula customizada (Custom Max no testador)
+   return profit * cmc * sharpeRaiz * drawdownCorrigido;
+  }
