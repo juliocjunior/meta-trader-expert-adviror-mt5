@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import traceback
 from pathlib import Path
+from datetime import datetime, timedelta
 
 # ============================================================
 # MAPA DE CENÁRIOS ESTÁTICOS
@@ -39,8 +40,8 @@ class WFEManager:
         self.PERIOD_NAME = config_dados['period_name'] # Nome (ex: "30M")
         self.N_JANELAS = config_dados['n_janelas']
         self.TRAIN_UNTIL_YEAR = config_dados['train_until_year']
-        self.TRAIN_YEARS = config_dados['train_years']
-        self.FORWARD_YEARS = config_dados['forward_years']
+        self.TRAIN_YEARS = config_dados['train_months']
+        self.FORWARD_YEARS = config_dados['forward_months']
         self.PARAMS_OTIMIZADOS = config_dados['parametros_otimizados']
         self.CONFIGS_ATIVAS = config_dados['configuracoes_ativas']
 
@@ -104,24 +105,54 @@ class WFEManager:
         return False
 
     def build_windows(self):
-        windows = []
-        # Engenharia reversa para alinhar a última janela ao ano alvo
-        start_year = self.TRAIN_UNTIL_YEAR - self.TRAIN_YEARS - self.N_JANELAS + 1
+        import datetime
         
-        self.log(f"[MATEMÁTICA] Janelas calculadas para o {self.PERIOD_NAME} iniciando em {start_year}.")
+        def add_months(sourcedate, months):
+            month = sourcedate.month - 1 + months
+            year = sourcedate.year + month // 12
+            month = month % 12 + 1
+            day = 1 # Sempre usamos o dia 1 para WFO padrão
+            return datetime.date(year, month, day)
+
+        windows = []
+        
+        # Data final do último Forward (Alvo: 1º de Janeiro do ano escolhido)
+        # Ex: Se TRAIN_UNTIL_YEAR é 2025, o fim total é 2025.01.01
+        final_date = datetime.date(self.TRAIN_UNTIL_YEAR, 1, 1)
+
+        # Precisamos calcular as janelas de trás para frente para alinhar com a data alvo
+        # Mas vamos armazenar na ordem cronológica (da mais antiga para a mais nova)
+        
+        temp_windows = []
+        current_end_point = final_date
 
         for i in range(self.N_JANELAS):
-            train_from = start_year + i
-            train_to = train_from + self.TRAIN_YEARS
-            forward_from = train_to
-            forward_to = forward_from + self.FORWARD_YEARS
+            # O forward termina no ponto atual
+            forward_to = current_end_point
+            # O forward começa X meses antes
+            forward_from = add_months(forward_to, -self.FORWARD_YEARS) # Aqui FORWARD_YEARS agora são meses
+            
+            # O treino termina onde o forward começa
+            train_to = forward_from
+            # O treino começa X meses antes do fim do treino
+            train_from = add_months(train_to, -self.TRAIN_YEARS) # Aqui TRAIN_YEARS agora são meses
 
-            windows.append((
-                f"{train_from:04d}.01.01",
-                f"{train_to:04d}.01.01",
-                f"{forward_from:04d}.01.01",
-                f"{forward_to:04d}.01.01",
+            # Formata para string MT5 (YYYY.MM.DD)
+            temp_windows.append((
+                train_from.strftime("%Y.%m.%d"),
+                train_to.strftime("%Y.%m.%d"),
+                forward_from.strftime("%Y.%m.%d"),
+                forward_to.strftime("%Y.%m.%d")
             ))
+
+            # O próximo ponto final (da janela anterior) é onde este Forward começou
+            # Isso cria o efeito de "Walk-Forward" (rolagem)
+            current_end_point = forward_from
+
+        # Inverte a lista para que a execução comece pela data mais antiga
+        windows = list(reversed(temp_windows))
+        
+        self.log(f"[MATEMÁTICA] Janelas calculadas em meses. Início da primeira janela: {windows[0][0]}")
         return windows
 
     def find_mt5_exe(self):
