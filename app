@@ -5,6 +5,7 @@ import traceback
 import json         # ### ADICIONADO PARA O AUTO-PRUNER ###
 import math         # ### ADICIONADO PARA O AUTO-PRUNER ###
 from pathlib import Path  # ### ADICIONADO PARA O AUTO-PRUNER ###
+import winsound     # ### ADICIONADO PARA O ALERTA SONORO ###
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QFormLayout, QGridLayout, QLineEdit, 
@@ -43,9 +44,9 @@ class TrabalhadorWFO(QThread):
             for tf in timeframes:
                 if not self._esta_rodando: break
 
-                self.sinal_log.emit("\n" + "=" * 70)
+                self.sinal_log.emit("\n" + "⬜" * 27)
                 self.sinal_log.emit(f"🚀 INICIANDO CICLO TIMEFRAME: {tf['nome']}")
-                self.sinal_log.emit("=" * 70)
+                self.sinal_log.emit("⬜" * 27)
 
                 # Criamos uma cópia dos dados injetando o timeframe atual
                 config_rodada = self.dados.copy()
@@ -68,7 +69,7 @@ class TrabalhadorWFO(QThread):
                 # Incrementa o progresso global após cada timeframe concluído
                 passo_atual_global += (len(cenarios) * n_janelas)
 
-            self.sinal_log.emit("\n✅ [SISTEMA] Processamento Multi-Timeframe finalizado.")
+            self.sinal_log.emit("\n✅✅✅ [SISTEMA] Processamento Multi-Timeframe finalizado. ✅✅✅")
             self.sinal_fim.emit()
             
         except InterruptedError as e:
@@ -98,12 +99,12 @@ class MainWindow(QMainWindow):
         widget_central = QWidget()
         self.setCentralWidget(widget_central)
         layout_principal = QHBoxLayout(widget_central)
-        layout_principal.setContentsMargins(10, 10, 10, 10)
-        layout_principal.setSpacing(10)
+        layout_principal.setContentsMargins(5, 5, 5, 5)
+        layout_principal.setSpacing(5)
 
         layout_principal.addWidget(self.criar_modulo_1(), 1) 
-        layout_principal.addWidget(self.criar_modulo_2(), 2) 
-        layout_principal.addWidget(self.criar_modulo_3(), 1) 
+        layout_principal.addWidget(self.criar_modulo_2(), 1) 
+        layout_principal.addWidget(self.criar_modulo_3(), 4) 
 
     # --------------------------------------------------------
     # MÓDULO 1: Configuração Geral e Timeframes
@@ -149,16 +150,16 @@ class MainWindow(QMainWindow):
         self.spin_janelas.setValue(5)
 
         # ### ADICIONADO PARA O AUTO-PRUNER ###
-        self.check_auto_pruner = QCheckBox("Loop Auto-Pruner (Reduzir até 10 passos)")
+        self.check_auto_pruner = QCheckBox("Auto-Pruner")
         self.check_auto_pruner.setChecked(False)
 
         form.addRow("Nome do EA:", self.input_ea)
         form.addRow("Ativo:", self.input_ativo)
         form.addRow("Timeframes:", self.widget_tfs)
         form.addRow(QLabel(" ")) 
-        form.addRow("Otimizar até o fim do ano:", self.spin_ano)
-        form.addRow("Meses de Treino:", self.spin_treino)
-        form.addRow("Meses de Forward:", self.spin_forward)
+        form.addRow("Train Until Year:", self.spin_ano)
+        form.addRow("Train Months:", self.spin_treino)
+        form.addRow("Forward Months:", self.spin_forward)
         form.addRow("Qtd Janelas:", self.spin_janelas)
         form.addRow("", self.check_auto_pruner) # ### ADICIONADO PARA O AUTO-PRUNER ###
 
@@ -171,24 +172,41 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------
     def criar_modulo_2(self):
         grupo = QGroupBox("") 
+        grupo.setMinimumWidth(400)
         layout = QVBoxLayout(grupo)
         layout.setSpacing(15)
 
         layout.addWidget(QLabel("Parâmetros Otimizados:"))
+        
+        
         self.tabela = QTableWidget()
         self.tabela.setColumnCount(4)
         self.tabela.setHorizontalHeaderLabels(["Variável", "Start", "Step", "Stop"])
+        
+        # 1. A coluna "Variável" (índice 0) estica para preencher todo o vazio da tabela
         self.tabela.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch) 
+        
+        # 2. Travamos o modo de redimensionamento das colunas 1, 2 e 3 para "Fixo"
+        self.tabela.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.tabela.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.tabela.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        
+        # 3. Definimos a largura ideal em pixels (80 a 90 pixels é perfeito para números)
+        self.tabela.setColumnWidth(1, 60) # Largura do Start
+        self.tabela.setColumnWidth(2, 60) # Largura do Step
+        self.tabela.setColumnWidth(3, 60) # Largura do Stop
+
         self.tabela.setAlternatingRowColors(True)
+
         self.tabela.verticalHeader().setVisible(False)
         self.tabela.verticalHeader().setDefaultSectionSize(40)
 
         params_iniciais = [
-            ("Espacamento_Filtro_Estocastico1", "1", "1", "99"),
-            ("Periodo_Filtro_Estocastico1", "1", "1", "300"),
-            ("Linha_Filtro_ADX1", "1", "1", "99"),
+            ("Espacamento_Filtro_Estocastico1", "1", "2", "99"),
+            ("Periodo_Filtro_Estocastico1", "2", "1", "320"),
+            ("Linha_Filtro_ADX1", "1", "2", "99"),
             ("Periodo_Filtro_ADX1", "1", "1", "99"),
-            ("Periodo_BollingerBands1", "1", "1", "300"),
+            ("Periodo_BollingerBands1", "2", "1", "320"),
             ("Desvio_BollingerBands1", "0.4", "0.1", "4.0")
         ]
         
@@ -354,10 +372,42 @@ class MainWindow(QMainWindow):
             concluido_com_sucesso = True
         else:
             self.barra_progresso.setFormat("Interrompido")
+            
+        self.trazer_para_frente()
 
-        # ### ADICIONADO PARA O AUTO-PRUNER (LÓGICA DE LOOP) ###
-        if concluido_com_sucesso and self.check_auto_pruner.isChecked():
-            self.processar_auto_pruner()
+    def trazer_para_frente(self):
+            """
+            Força a janela do PyQt5 a aparecer na frente de todos os outros aplicativos.
+            """
+            # 1. Se a janela estiver minimizada, restaura para o tamanho normal
+            if self.isMinimized():
+                self.showNormal()
+                
+            # 2. O truque (Bypass do Windows): Dizemos ao SO que a janela deve ficar sempre no topo
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+            self.show()
+            
+            # 3. Imediatamente removemos a restrição de "sempre no topo" para que ela não fique
+            # presa para sempre na frente das outras, apenas dê o "pulo" na tela.
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+            self.show()
+            
+            # 4. Exige o foco e traz para o topo da pilha de janelas
+            self.raise_()
+            self.activateWindow()
+            
+            # ========================================================
+            # 5. ALERTA SONORO (Execução Assíncrona / Non-blocking)
+            # ========================================================
+            
+            # OPÇÃO A: Usar um som customizado (arquivo .wav na mesma pasta do script)
+            # Certifique-se de ter um arquivo de áudio curto (.wav) para não prender recursos do SO.
+            caminho_som = str(Path(__file__).resolve().parent / "ding.wav")
+            try:
+                winsound.PlaySound(caminho_som, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            except Exception:
+                # OPÇÃO B (Fallback): Toca um som padrão de sistema caso o arquivo falhe
+                winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
 
 
     def processar_auto_pruner(self):
@@ -450,8 +500,7 @@ class MainWindow(QMainWindow):
             color: #61AFEF;
             border: 1px solid #282C34;
             border-radius: 8px;
-            margin-top: 15px;
-            padding: 20px 15px 15px 15px;
+            padding: 5px 5px 5px 5px;
             background-color: #181A1F;
         }
 
