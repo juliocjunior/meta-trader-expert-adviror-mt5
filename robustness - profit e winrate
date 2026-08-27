@@ -1,0 +1,518 @@
+# -*- coding: utf-8 -*-
+
+import os
+import math
+import sys
+import re
+import argparse
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Union
+
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+import time
+import matplotlib.colors as mcolors
+
+# ============================================================
+# FUNÇÕES UTILITÁRIAS PURAS (Sem Estado)
+# ============================================================
+def limpar_nome_arquivo(texto: str) -> str:
+    """Limpa caracteres inválidos para nomes de arquivos e pastas usando Regex."""
+    return re.sub(r'[<>:"/\\|?*]', '_', str(texto))
+
+def numero(texto: Union[str, float, None]) -> Optional[float]:
+    """Converte texto numérico (inclusive formato PT-BR) para float."""
+    if texto is None: return None
+    texto = str(texto).strip().replace(",", ".")
+    try:
+        valor = float(texto)
+        return None if math.isnan(valor) else valor
+    except ValueError: 
+        return None
+
+def nome_local(tag: str) -> str:
+    """Remove namespaces de tags XML."""
+    return tag.split("}", 1)[1] if "}" in tag else tag
+
+# ============================================================
+# CLASSE PRINCIPAL: ROBUSTNESS ANALYZER
+# ============================================================
+class RobustnessAnalyzer:
+    def __init__(self, configuracao: str, parametros: List[str], ea_nome: str, n_janelas: int, xml_dir: str, intervalo: str = "60 min", log_func=None):
+        self.configuracao = configuracao
+        self.parametros = parametros
+        self.ea_nome = ea_nome
+        self.n_janelas = n_janelas
+        self.xml_dir = Path(xml_dir)
+        self.intervalo = intervalo
+        
+        self.log = log_func if log_func else print
+
+        # Nomes fixos das colunas do MT5
+        self.col_back_result = "Result"
+        self.col_forward_result = "Forward Result"
+        self.col_profit = "Profit"
+        self.col_trades = "Trades"
+
+        # Configuração de Diretórios
+        self.base_dir = Path(__file__).resolve().parent
+        self.output_dir = self.base_dir / "robustness_output"
+        self.png_dir = self.output_dir / "png" / limpar_nome_arquivo(self.ea_nome) / limpar_nome_arquivo(self.intervalo)
+        self.csv_dir = self.output_dir / "csv" / limpar_nome_arquivo(self.ea_nome) / limpar_nome_arquivo(self.intervalo)
+
+        self._garantir_diretorios()
+
+    def _garantir_diretorios(self) -> None:
+        """Cria os diretórios necessários caso não existam."""
+        self.png_dir.mkdir(parents=True, exist_ok=True)
+        self.csv_dir.mkdir(parents=True, exist_ok=True)
+
+    def _salvar_csv(self, df: pd.DataFrame, nome_arquivo: str) -> None:
+        """Utilitário para salvar dataframes em CSV."""
+        caminho = self.csv_dir / f"{limpar_nome_arquivo(self.configuracao)}_{nome_arquivo}.csv"
+        df.to_csv(caminho, sep=";", decimal=",")
+
+    def ler_xml(self, caminho: Path, tipo: str) -> List[Dict[str, Any]]:
+
+        if not caminho.is_file():
+            raise FileNotFoundError(f"Arquivo não encontrado: {caminho}")
+
+        self.log(f"  [LENDO RÁPIDO] Extraindo e vetorizando dados de: {caminho.name}")
+
+        tree = ET.parse(caminho)
+        root = tree.getroot()
+        
+        dados_brutos = []
+        for row in root.iter():
+            if row.tag.split('}')[-1].lower() == 'row':
+                linha = []
+                for cell in row:
+                    if cell.tag.split('}')[-1].lower() == 'cell':
+                        valor = ""
+                        for data in cell:
+                            if data.tag.split('}')[-1].lower() == 'data':
+                                valor = data.text if data.text else ""
+                                break 
+                        linha.append(valor)
+                if linha:
+                    dados_brutos.append(linha)
+                    
+        if not dados_brutos:
+            raise RuntimeError(f"Nenhum dado encontrado no XML: {caminho.name}")
+
+        header = [str(c).strip() for c in dados_brutos[0]]
+        df = pd.DataFrame(dados_brutos[1:], columns=header)
+
+        resultado_coluna = self.col_back_result if tipo == "back" else self.col_forward_result
+        
+        col_dd = next((c for c in header if "dd" in c.lower() or "drawdown" in c.lower() or "rebaixamento" in c.lower()), None)
+        col_pf = next((c for c in header if "profit factor" in c.lower() or "fator de lucro" in c.lower()), None)
+
+        colunas_alvo = [resultado_coluna, self.col_profit, self.col_trades] + self.parametros
+        if col_dd: colunas_alvo.append(col_dd)
+        if col_pf: colunas_alvo.append(col_pf)
+        
+        faltando = [c for c in [resultado_coluna, self.col_profit, self.col_trades] + self.parametros if c not in df.columns]
+        if faltando:
+            raise RuntimeError(f"Colunas obrigatórias faltando no XML: {faltando}")
+
+        df = df[colunas_alvo].copy()
+
+        renomear = {
+            resultado_coluna: "result",
+            self.col_profit: "profit",
+            self.col_trades: "trades"
+        }
+        if col_dd: renomear[col_dd] = "drawdown"
+        if col_pf: renomear[col_pf] = "profit_factor"
+        df.rename(columns=renomear, inplace=True)
+
+        for col in df.columns:
+            df[col] = df[col].astype(str).str.replace(',', '.').str.strip()
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        colunas_validacao = self.parametros + ['result']
+        df.dropna(subset=colunas_validacao, inplace=True)
+
+        if "drawdown" not in df.columns: df["drawdown"] = 0.0
+        if "profit_factor" not in df.columns: df["profit_factor"] = 0.0
+        
+        df["drawdown"] = df["drawdown"].fillna(0.0)
+        df["profit_factor"] = df["profit_factor"].fillna(0.0)
+
+        for p in self.parametros:
+            if (df[p] % 1 == 0).all():  # Checa se toda a coluna é de números inteiros
+                df[p] = df[p].astype(int)
+
+        return df.to_dict('records')
+
+    # ============================================================
+    # CÁLCULOS MATEMÁTICOS
+    # ============================================================
+    def calcular_medias_janela(self, registros: List[Dict[str, Any]], parametro: str, chave_metrica: str = "result") -> Dict[float, float]:
+        grupos = defaultdict(list)
+        for r in registros:
+            if r.get(chave_metrica) is not None:
+                grupos[r[parametro]].append(r[chave_metrica])
+        return {v: sum(l)/len(l) for v, l in grupos.items() if l}
+
+    def calcular_media_das_janelas(self, medias_janelas: Dict[int, Dict[float, float]]) -> Dict[float, float]:
+        valores = set()
+        for d in medias_janelas.values(): valores.update(d.keys())
+        res = {}
+        for v in valores:
+            lista = [medias_janelas[j][v] for j in sorted(medias_janelas) if v in medias_janelas[j]]
+            if lista: res[v] = sum(lista) / len(lista)
+        return res
+    
+    def calcular_estatisticas_forward(self, dados_forward: Dict[int, List[Dict[str, Any]]]) -> Dict[str, Any]:
+            profits = []
+            trades_geral = []
+            volume_configs_lucro = []
+            volume_configs_prejuizo = []
+            
+            for registros in dados_forward.values():
+                for registro in registros:
+                    profit = registro.get("profit")       # Lucro final em $ daquela configuração
+                    qtd_trades = registro.get("trades")   
+                    
+                    if profit is not None and qtd_trades is not None:
+                        profits.append(profit)
+                        trades_geral.append(qtd_trades)
+
+                        if qtd_trades > 0:
+                            if profit > 0: # Se a configuração fechou no lucro
+                                volume_configs_lucro.append(qtd_trades)
+                            elif profit < 0: # Se a configuração fechou no prejuízo
+                                volume_configs_prejuizo.append(qtd_trades)
+
+            mp = sum(profits) / len(profits) if profits else 0.0
+            pos = sum(1 for p in profits if p > 0)
+            pp = (pos / len(profits) * 100.0) if profits else 0.0
+            mt = sum(trades_geral) / len(trades_geral) if trades_geral else 0.0
+
+            media_volumetria_lucro = sum(volume_configs_lucro) / len(volume_configs_lucro) if volume_configs_lucro else 0.0
+            media_volumetria_prejuizo = sum(volume_configs_prejuizo) / len(volume_configs_prejuizo) if volume_configs_prejuizo else 0.0
+            
+            estatisticas = {
+                "media_profit": mp, 
+                "media_trades": mt, 
+                "media_trades_configs_lucrativas": media_volumetria_lucro, 
+                "media_trades_configs_perdedoras": media_volumetria_prejuizo, 
+                "percentual_positivo": pp, 
+                "total_configuracoes": len(profits), 
+                "configuracoes_positivas": pos
+            }
+            
+            self._salvar_csv(pd.DataFrame([estatisticas]), "Forward_Stats_Global")
+            return estatisticas
+    
+    def calcular_winrate_consistencia(self, dados_forward: Dict[int, List[Dict[str, Any]]], parametro: str) -> Dict[float, float]:
+        vitorias_por_valor = defaultdict(int)
+        total_testes_por_valor = defaultdict(int)
+        for registros in dados_forward.values():
+            for registro in registros:
+                valor_param = registro.get(parametro)
+                profit = registro.get("profit")
+                if valor_param is not None and profit is not None:
+                    total_testes_por_valor[valor_param] += 1
+                    if profit > 0:
+                        vitorias_por_valor[valor_param] += 1
+                        
+        return {valor: (vitorias_por_valor[valor] / total_testes) * 100.0 
+                for valor, total_testes in total_testes_por_valor.items() if total_testes > 0}
+        
+    # ============================================================
+    # VISUALIZAÇÃO E GRÁFICOS (ALTA RESOLUÇÃO)
+    # ============================================================
+    def gerar_png_plato_e_winrate(self, resultados_profit: Dict[str, Any], dados_forward: Dict[int, List[Dict[str, Any]]], estatisticas: Dict[str, Any], modo_heatmap: str = "winrate") -> None:
+            """Gera um gráfico combinado, alternando os heatmaps entre Profit ou Win Rate."""
+            
+            # 1. Configura nomes de arquivos e títulos dinâmicos baseados no modo
+            if modo_heatmap == "profit":
+                metrica_nome = "Profit"
+                titulo_base = "ESTABILIDADE DO PLATÔ, WIN RATE E MATRIZ GERAL (HEATMAPS: PROFIT)"
+            else:
+                metrica_nome = "WinRate"
+                titulo_base = "ESTABILIDADE DO PLATÔ, WIN RATE E MATRIZ GERAL (HEATMAPS: WIN RATE)"
+                
+            caminho = self.png_dir / f"{limpar_nome_arquivo(self.configuracao)}_{metrica_nome}.png"
+            
+            mp = estatisticas["media_profit"]
+            mt = estatisticas["media_trades"]
+            mt_lucrativas = estatisticas["media_trades_configs_lucrativas"]
+            mt_perdedoras = estatisticas["media_trades_configs_perdedoras"]
+            pp = estatisticas["percentual_positivo"]
+            tc = estatisticas["total_configuracoes"]
+            cp = estatisticas["configuracoes_positivas"]
+
+            info = f"Média Profit: {mp:.2f}  |  Média Trades: {mt:.2f}  |  Trades (Positivos): {mt_lucrativas:.2f}  |  Trades (Negativos): {mt_perdedoras:.2f}  |  % Profit positivo: {pp:.2f}% ({cp}/{tc})"
+
+            qtd_params = len(self.parametros)
+            cols = qtd_params if qtd_params > 0 else 1
+            rows = 2 + qtd_params 
+
+            largura_coluna = 26.0 / 3.0  
+            altura_linha = 9.0
+            fig, axes = plt.subplots(rows, cols, figsize=(largura_coluna * cols, altura_linha * rows), squeeze=False)
+
+            df_csv_list = []
+            resultados_tr = {p: {j: self.calcular_medias_janela(dados_forward[j], p, "trades") for j in range(1, self.n_janelas+1)} for p in self.parametros}
+            
+            todos_registros = []
+            for registros in dados_forward.values():
+                todos_registros.extend(registros)
+            
+            df_forward_all = pd.DataFrame(todos_registros)
+            
+            # Cria a coluna binária para Win Rate
+            if "profit" in df_forward_all.columns:
+                df_forward_all["is_win"] = (df_forward_all["profit"] > 0).astype(float) * 100.0
+                
+            self._salvar_csv(df_forward_all, "Dados_Master_Forward")
+
+            for i, p in enumerate(self.parametros):
+                self.log(f"  -> Desenhando gráficos do parâmetro: {p} ({i+1}/{qtd_params}) - Modo: {modo_heatmap.upper()}")
+                
+                # ==============================
+                # LINHA 0: ESTABILIDADE DO PLATÔ
+                # ==============================
+                ax_plato = axes[0, i]
+                
+                media_final = self.calcular_media_das_janelas(resultados_profit[p])
+                x = sorted(media_final.keys())
+                y = [media_final[v] for v in x]
+                
+                if len(x) >= 3:
+                    x_array = np.round(np.array(x, dtype=float), 6)
+                    diffs = np.round(np.diff(x_array), 6)
+                    step = np.min(diffs[diffs > 0]) if len(diffs[diffs > 0]) > 0 else 1.0
+                    
+                    num_steps = int(np.round((np.max(x_array) - np.min(x_array)) / step)) + 1
+                    idx_uniform = np.linspace(np.min(x_array), np.max(x_array), num_steps)
+                    idx_uniform = np.round(idx_uniform, 6)
+                    
+                    idx_combined = np.sort(np.unique(np.union1d(idx_uniform, x_array)))
+                    
+                    df = pd.DataFrame({'x': x_array, 'y': y}).drop_duplicates(subset=['x']).set_index('x')
+                    df_uniform = df.reindex(idx_combined)
+                    
+                    df_uniform['mean'] = df_uniform['y'].rolling(window=3, center=True, min_periods=1).mean()
+                    df_uniform['std'] = df_uniform['y'].rolling(window=3, center=True, min_periods=1).std().fillna(0)
+                    
+                    df_plot = df_uniform.loc[x_array]
+                    
+                    x_categorias_plato = [str(int(val)) if float(val).is_integer() else str(val) for val in df_plot.index]
+                    
+                    ax_plato.fill_between(x_categorias_plato, df_plot['mean'] - df_plot['std'], df_plot['mean'] + df_plot['std'], 
+                                    color='tab:blue', alpha=0.15, label='Volatilidade (± 1 Std Dev)')
+                    ax_plato.plot(x_categorias_plato, df_plot['mean'], color='tab:blue', marker='o', linewidth=3, 
+                            markersize=7, label='Média da Vizinhança')
+                    ax_plato.plot(x_categorias_plato, df_plot['y'], color='gray', linestyle=':', linewidth=2, alpha=0.6, label='Profit Real')
+                    
+                    df_csv = df_plot.rename(columns={'y': f'{p}_Profit_Real', 'mean': f'{p}_Media_Vizinhos', 'std': f'{p}_Std_Dev'})
+                    df_csv.index.name = p
+                    df_csv_list.append(df_csv)
+                else:
+                    x_categorias_plato = [str(int(val)) if float(val).is_integer() else str(val) for val in x]
+                    ax_plato.plot(x_categorias_plato, y, marker="o", color="tab:blue", linewidth=3, markersize=7)
+                    
+                ax_plato.legend(loc="upper left", fontsize=12)
+                ax_plato.axhline(0, linewidth=1.2, alpha=0.4, color="black")
+                ax_plato.set_title(f"{p} (Estabilidade da Vizinhança)", fontsize=15, fontweight="bold")
+                ax_plato.set_ylabel("Profit ($)", color="tab:blue", fontweight="bold", fontsize=13)
+                ax_plato.set_xticks(range(len(x_categorias_plato)))
+                ax_plato.set_xticklabels(x_categorias_plato, rotation=90, fontsize=9)
+                ax_plato.margins(x=0)
+                ax_plato.tick_params(axis='y', which='major', labelsize=10) 
+                ax_plato.grid(True, alpha=0.3)
+
+                # ==============================
+                # LINHA 1: WINRATE CONSISTENCY
+                # ==============================
+                ax_wr = axes[1, i]
+                ax_wr2 = ax_wr.twinx()
+                
+                scores = self.calcular_winrate_consistencia(dados_forward, p)
+                media_tr = self.calcular_media_das_janelas(resultados_tr[p])
+                
+                x_wr = sorted(scores.keys())
+                y_wr = [scores[v] for v in x_wr]
+                y_tr = [media_tr.get(v, 0) for v in x_wr]
+                
+                x_categorias_wr = [str(int(v)) if float(v).is_integer() else str(v) for v in x_wr]
+                
+                if x_categorias_wr: 
+                    l2 = ax_wr2.fill_between(x_categorias_wr, 0, y_tr, color='gray', alpha=0.2, step="mid", label='Volume de Trades')
+                    l1, = ax_wr.plot(x_categorias_wr, y_wr, marker="o", linewidth=3.0, markersize=7, color="tab:blue", label="Win Rate Médio")
+                    ax_wr.axhline(50, linewidth=2.0, alpha=0.8, color="red", linestyle="--", label="Win Rate = 50%")
+                
+                ax_wr.set_ylim(-5, 105)
+                ax_wr2.set_ylim(bottom=0)
+                ax_wr.set_title(f"{p} (Win Rate vs Amostra)", fontsize=15, fontweight="bold")
+                ax_wr.set_ylabel("Win Rate (%)", color="tab:blue", fontweight="bold", fontsize=13)
+                ax_wr2.set_ylabel("Quantidade de Trades", color="gray", fontweight="bold", fontsize=13)
+                ax_wr.set_xticks(range(len(x_categorias_wr)))
+                ax_wr.set_xticklabels(x_categorias_wr, rotation=90, fontsize=9)
+                ax_wr.margins(x=0)
+                ax_wr2.margins(x=0)
+                ax_wr.tick_params(axis='y', which='major', labelsize=10)
+                ax_wr2.tick_params(axis='y', which='major', labelsize=10)
+                ax_wr.grid(True, alpha=0.3)
+
+                # ==============================
+                # LINHAS 2 em diante: MATRIZ DE HEATMAPS
+                # ==============================
+                for k, param_base in enumerate(self.parametros):
+                    linha_atual = 2 + k 
+                    ax_hm = axes[linha_atual, i]
+                    
+                    if p == param_base:
+                        ax_hm.text(0.5, 0.5, "Gráfico não aplicável\n(Mesmo parâmetro)", 
+                                horizontalalignment='center', verticalalignment='center',
+                                fontsize=14, color='gray', transform=ax_hm.transAxes)
+                        ax_hm.set_xticks([])
+                        ax_hm.set_yticks([])
+                        ax_hm.set_title(f"Interação nula", fontsize=15, fontweight="bold", color="gray")
+                    else:
+                        # Define a coluna de interesse baseado no modo
+                        coluna_alvo = "is_win" if modo_heatmap == "winrate" else "profit"
+
+                        if param_base in df_forward_all.columns and p in df_forward_all.columns and coluna_alvo in df_forward_all.columns:
+                            df_2d = df_forward_all[[param_base, p, coluna_alvo]].dropna()
+                            
+                            if not df_2d.empty:
+                                pivot = df_2d.pivot_table(index=param_base, columns=p, values=coluna_alvo, aggfunc="mean")
+                                pivot = pivot.sort_index(ascending=False)
+                                
+                                pivot_smoothed = pivot.rolling(window=3, center=True, min_periods=1).mean()
+                                pivot_smoothed = pivot_smoothed.T.rolling(window=3, center=True, min_periods=1).mean().T
+                                
+                                # -- Lógica de cores para WIN RATE --
+                                if modo_heatmap == "winrate":
+                                    centro_dinamico = pivot_smoothed.mean().mean()
+                                    if pd.isna(centro_dinamico): centro_dinamico = 50.0
+                                    if centro_dinamico <= 0.0: centro_dinamico = 0.1
+                                    if centro_dinamico >= 100.0: centro_dinamico = 99.9
+                                    motor_de_cor = mcolors.TwoSlopeNorm(vmin=5.0, vcenter=centro_dinamico, vmax=70.0)
+                                
+                                # -- Lógica de cores para PROFIT FINANCEIRO --
+                                else:
+                                    centro_zero = 0.0
+                                    vmin_stat = pivot_smoothed.stack().quantile(0.05)
+                                    vmax_stat = pivot_smoothed.stack().quantile(0.95)
+                                    if vmin_stat >= 0.0: vmin_stat = -0.1
+                                    if vmax_stat <= 0.0: vmax_stat = 0.1
+                                    motor_de_cor = mcolors.TwoSlopeNorm(vmin=vmin_stat, vcenter=centro_zero, vmax=vmax_stat)
+
+                                sns.heatmap(pivot_smoothed, cmap="RdYlGn", 
+                                            norm=motor_de_cor, 
+                                            annot=False, ax=ax_hm, 
+                                            cbar=False)
+                                
+                                ax_hm.set_title(f"Vizinhança: {param_base} vs {p}", fontsize=15, fontweight="bold")
+                                ax_hm.set_ylabel(param_base, fontweight="bold", fontsize=13)
+                                ax_hm.set_xlabel(p, fontweight="bold", fontsize=13)
+                                ax_hm.tick_params(axis='both', which='major', labelsize=12)
+                            else:
+                                ax_hm.text(0.5, 0.5, "Dados insuficientes", horizontalalignment='center', verticalalignment='center')
+                        else:
+                            ax_hm.text(0.5, 0.5, "Dados insuficientes", horizontalalignment='center', verticalalignment='center')
+
+            if df_csv_list and modo_heatmap == "winrate": 
+                # Salva o CSV da estabilidade apenas na primeira passada para evitar sobrescrever
+                self._salvar_csv(pd.concat(df_csv_list, axis=1), "Plateau_Stability_Data")
+
+            titulo_combinado = f"{titulo_base}\nConfiguração: {self.configuracao}   |   {info}"
+            fig.suptitle(titulo_combinado, fontsize=22, fontweight="bold")
+            
+            plt.tight_layout(rect=[0, 0, 1, 0.96 - (0.005 * rows)])
+            plt.savefig(str(caminho), dpi=100, bbox_inches="tight")
+            plt.close()
+            print(f"  [SALVO] {metrica_nome}")
+
+    # ============================================================
+    # FLUXO PRINCIPAL (EXECUÇÃO)
+    # ============================================================
+    def run(self) -> None:
+            self.log("\n" + "="*60)
+            self.log("🚀 INICIANDO PIPELINE DE ANÁLISE DE ROBUSTEZ")
+            self.log("="*60)
+
+            self.log("\n[ETAPA 1/4] Lendo e extraindo dados dos arquivos XML...")
+            dados_back, dados_forward = {}, {}
+            for j in range(1, self.n_janelas + 1):
+                dados_back[j] = self.ler_xml(self.xml_dir / f"otimizacao_{j}.xml", "back")
+                dados_forward[j] = self.ler_xml(self.xml_dir / f"otimizacao_{j}.forward.xml", "forward")
+                
+            self.log("\n[ETAPA 2/4] Consolidando banco de dados e calculando estatísticas...")
+            estatisticas = self.calcular_estatisticas_forward(dados_forward)
+            res_profit_global = {p: {j: self.calcular_medias_janela(dados_forward[j], p, "profit") for j in range(1, self.n_janelas+1)} for p in self.parametros}
+            
+            todos_registros = []
+            for registros in dados_forward.values():
+                todos_registros.extend(registros)
+            df_forward_all = pd.DataFrame(todos_registros)
+
+            self.log("\n[ETAPA 4/4] Renderizando Matriz de Gráficos (Double Pass)...")
+            self.log("  -> Atenção: O Matplotlib renderizará 2 imagens. Isso pode levar alguns segundos.")
+            
+            self.log("\n  [RENDER 1/2] Gerando gráfico com Heatmaps de WIN RATE...")
+            self.gerar_png_plato_e_winrate(res_profit_global, dados_forward, estatisticas, modo_heatmap="winrate")
+
+            self.log("\n  [RENDER 2/2] Gerando gráfico com Heatmaps de PROFIT FINANCEIRO...")
+            self.gerar_png_plato_e_winrate(res_profit_global, dados_forward, estatisticas, modo_heatmap="profit")
+
+# ============================================================
+# ENTRYPOINT
+# ============================================================
+def main() -> int:
+    tempo_inicio = time.time() 
+    
+    parser = argparse.ArgumentParser(description="Robustness Analyzer Universal para MT5")
+    parser.add_argument("configuracao", help="Nome da configuração (ex: PADRAO)")
+    parser.add_argument("parametros", help="Lista de parâmetros separados por vírgula (ex: 'StopLoss,TakeProfit')")
+    parser.add_argument("ea_nome", help="Nome do Expert Advisor")
+    parser.add_argument("n_janelas", type=int, help="Número de janelas de otimização (ex: 4)")
+    parser.add_argument("xml_dir", help="Caminho do diretório com os arquivos XML")
+    parser.add_argument("intervalo", nargs="?", default="60 min", help="Intervalo de tempo (opcional, padrão: '60 min')")
+
+    if len(sys.argv) == 1:
+        parser.print_help(sys.stderr)
+        return 1
+
+    args = parser.parse_args()
+
+    try:
+        parametros_lista = [p.strip() for p in args.parametros.split(",") if p.strip()]
+        
+        analyzer = RobustnessAnalyzer(
+            configuracao=args.configuracao.upper().strip(), 
+            parametros=parametros_lista, 
+            ea_nome=args.ea_nome.strip(), 
+            n_janelas=args.n_janelas, 
+            xml_dir=args.xml_dir.strip(), 
+            intervalo=args.intervalo.strip()
+        )
+        analyzer.run()
+        tempo_fim = time.time()
+        tempo_total = tempo_fim - tempo_inicio
+        minutos, segundos = divmod(tempo_total, 60)
+        
+        print("\n" + "="*60)
+        print(f"✅ [SUCESSO] Processamento concluído com perfeição.")
+        print(f"⏱️  Tempo total de execução: {int(minutos)} min e {segundos:.2f} seg")
+        print("="*60 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ [ERRO CRÍTICO] Ocorreu uma falha no processamento: {e}")
+        return 1
+
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
