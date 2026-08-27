@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import time
+import matplotlib.colors as mcolors
 
 # ============================================================
 # FUNÇÕES UTILITÁRIAS PURAS (Sem Estado)
@@ -41,7 +42,7 @@ def nome_local(tag: str) -> str:
 # CLASSE PRINCIPAL: ROBUSTNESS ANALYZER
 # ============================================================
 class RobustnessAnalyzer:
-    def __init__(self, configuracao: str, parametros: List[str], ea_nome: str, n_janelas: int, xml_dir: str, intervalo: str = "30 min", log_func=None):
+    def __init__(self, configuracao: str, parametros: List[str], ea_nome: str, n_janelas: int, xml_dir: str, intervalo: str = "60 min", log_func=None):
         self.configuracao = configuracao
         self.parametros = parametros
         self.ea_nome = ea_nome
@@ -269,6 +270,10 @@ class RobustnessAnalyzer:
             # ---------------------------------------------------------
             if "profit" in df_forward_all.columns:
                 df_forward_all["is_win"] = (df_forward_all["profit"] > 0).astype(float) * 100.0
+                # Calcula a variância global da estratégia filtrando apenas zonas com volume aceitável
+            winrate_global_min = df_forward_all.groupby([self.parametros[0], self.parametros[1]])['is_win'].mean().min()
+            winrate_global_max = df_forward_all.groupby([self.parametros[0], self.parametros[1]])['is_win'].mean().max()
+            winrate_global_mediano = df_forward_all['is_win'].mean() # Média global do win rate
                 
             self._salvar_csv(df_forward_all, "Dados_Master_Forward")
 
@@ -404,8 +409,22 @@ class RobustnessAnalyzer:
                                 pivot_smoothed = pivot.rolling(window=3, center=True, min_periods=1).mean()
                                 pivot_smoothed = pivot_smoothed.T.rolling(window=3, center=True, min_periods=1).mean().T
                                 
-                                # Heatmap com limite de 0 a 100 e centro exato em 50
-                                sns.heatmap(pivot_smoothed, cmap="RdYlGn", vmin=0, vmax=100, center=50, annot=False, ax=ax_hm, cbar=False)
+                                # 1. Calcula a média dinâmica apenas dos dados desta matriz específica
+                                centro_dinamico = pivot_smoothed.mean().mean()
+
+                                # 2. Trava de segurança: O centro não pode encostar nos extremos absolutos
+                                if pd.isna(centro_dinamico): centro_dinamico = 50.0
+                                if centro_dinamico <= 0.0: centro_dinamico = 0.1
+                                if centro_dinamico >= 100.0: centro_dinamico = 99.9
+
+                                # 3. Cria o Motor de Normalização de 2 Velocidades (TwoSlopeNorm)
+                                motor_de_cor = mcolors.TwoSlopeNorm(vmin=5.0, vcenter=centro_dinamico, vmax=70.0)
+
+                                # 4. Plota o Heatmap APAGANDO vmin, vmax e center, e usando o 'norm'
+                                sns.heatmap(pivot_smoothed, cmap="RdYlGn", 
+                                            norm=motor_de_cor,       # <-- NOVA REGRA DE CORES AQUI
+                                            annot=False, ax=ax_hm, 
+                                            cbar=False)
                                 ax_hm.set_title(f"Vizinhança: {param_base} vs {p}", fontsize=15, fontweight="bold")
                                 ax_hm.set_ylabel(param_base, fontweight="bold", fontsize=13)
                                 ax_hm.set_xlabel(p, fontweight="bold", fontsize=13)
@@ -464,7 +483,7 @@ def main() -> int:
     parser.add_argument("ea_nome", help="Nome do Expert Advisor")
     parser.add_argument("n_janelas", type=int, help="Número de janelas de otimização (ex: 4)")
     parser.add_argument("xml_dir", help="Caminho do diretório com os arquivos XML")
-    parser.add_argument("intervalo", nargs="?", default="30 min", help="Intervalo de tempo (opcional, padrão: '30 min')")
+    parser.add_argument("intervalo", nargs="?", default="60 min", help="Intervalo de tempo (opcional, padrão: '60 min')")
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
