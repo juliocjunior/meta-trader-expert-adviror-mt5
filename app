@@ -129,7 +129,7 @@ class MainWindow(QMainWindow):
         for i, (nome, valor) in enumerate(tfs_lista):
             chk = QCheckBox(nome)
             chk.setProperty("minutos", valor)
-            if nome == "30M": chk.setChecked(True)
+            if nome == "60M": chk.setChecked(True)
             self.check_tfs[nome] = chk
             self.grid_tfs.addWidget(chk, i // 2, i % 2)
 
@@ -143,11 +143,11 @@ class MainWindow(QMainWindow):
 
         self.spin_forward = QSpinBox()
         self.spin_forward.setRange(1, 100)
-        self.spin_forward.setValue(6)
+        self.spin_forward.setValue(12)
 
         self.spin_janelas = QSpinBox()
         self.spin_janelas.setRange(1, 20)
-        self.spin_janelas.setValue(5)
+        self.spin_janelas.setValue(10)
 
         # ### ADICIONADO PARA O AUTO-PRUNER ###
         self.check_auto_pruner = QCheckBox("Auto-Pruner")
